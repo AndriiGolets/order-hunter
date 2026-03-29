@@ -140,4 +140,19 @@ public enum OrderTitles {
     }
     return orderTitle;
   }
+
+  /**
+   * Resolves head count by product title and falls back to provided default.
+   *
+   * @param title product title used for lookup
+   * @param defaultHeads fallback heads value when title is missing from the catalog
+   * @return resolved head count or fallback value
+   */
+  public static int getHeadsOrDefault(String title, int defaultHeads) {
+    if (title == null) {
+      return defaultHeads;
+    }
+    OrderTitles orderTitle = TITLE_MAP.get(title.toLowerCase(Locale.ROOT));
+    return orderTitle != null ? orderTitle.getHeads() : defaultHeads;
+  }
 }

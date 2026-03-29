@@ -17,6 +17,7 @@ import name.golets.order.hunter.common.model.Record;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+/** Verifies parsing rules that transform raw records into normalized order objects. */
 class OrderParsingUtilTest {
 
   /**
@@ -33,7 +34,7 @@ class OrderParsingUtilTest {
       new Record()
           .setSid("sidProductTitle")
           .setObjectId(OrderConstants.TITLE_OBJECT_ID)
-          .setPrimary("ProductTitle1");
+          .setPrimary("The Royal Bros");
 
   Record titleRecordForHelper =
       new Record()
@@ -70,6 +71,11 @@ class OrderParsingUtilTest {
             titleRecord, titleRecordForHelper, artistRecord, orderRecord, orderRecordHelper));
   }
 
+  /**
+   * Verifies parser splits root/helper orders and populates common fields.
+   *
+   * <p>This scenario matters because downstream workflow depends on proper grouping and metadata.
+   */
   @Test
   void testParseOrdersProperParsing() {
     ParsedOrders parsedOrders =
@@ -86,9 +92,10 @@ class OrderParsingUtilTest {
     assertNotNull(rootOrder);
     assertEquals("sidOrderRecord", rootOrder.getSid());
     assertEquals("#292249", rootOrder.getName());
-    assertEquals("ProductTitle1", rootOrder.getProductTitle());
+    assertEquals("The Royal Bros", rootOrder.getProductTitle());
     assertEquals("sidArtist", rootOrder.getArtist());
     assertEquals(OrderType.PRIORITY, rootOrder.getOrderType());
+    assertEquals(3, rootOrder.getHeads());
     assertFalse(rootOrder.isRecordHelper());
 
     Map<String, Map<String, Order>> ordersHelperMapByName = parsedOrders.getOrdersHelperMapByName();
@@ -106,9 +113,15 @@ class OrderParsingUtilTest {
     assertEquals(OrderConstants.orderHelperTitles()[0], helperOrder.getProductTitle());
     assertEquals("sidArtist", helperOrder.getArtist());
     assertEquals(OrderType.PRIORITY, helperOrder.getOrderType());
+    assertEquals(1, helperOrder.getHeads());
     assertTrue(helperOrder.isRecordHelper());
   }
 
+  /**
+   * Verifies blacklisted titles are filtered out from parsed root orders.
+   *
+   * <p>This protects business flow from processing unsupported order types.
+   */
   @Test
   void testParseOrdersBlacklistedOrder() {
     response.getRecords().stream()
@@ -125,6 +138,11 @@ class OrderParsingUtilTest {
     assertEquals(0, ordersMapBySid.size());
   }
 
+  /**
+   * Verifies parser still creates orders when artist reference is missing.
+   *
+   * <p>This edge case matters because upstream data may omit artist links.
+   */
   @Test
   void testParseOrdersNullArtistField() {
     response.getRecords().stream()
@@ -144,11 +162,16 @@ class OrderParsingUtilTest {
     assertNotNull(parsedOrder);
     assertEquals("sidOrderRecord", parsedOrder.getSid());
     assertEquals("#292249", parsedOrder.getName());
-    assertEquals("ProductTitle1", parsedOrder.getProductTitle());
+    assertEquals("The Royal Bros", parsedOrder.getProductTitle());
     assertNull(parsedOrder.getArtist());
     assertEquals(OrderType.PRIORITY, parsedOrder.getOrderType());
   }
 
+  /**
+   * Verifies parser skips order records that cannot resolve to a product title.
+   *
+   * <p>This prevents partially linked records from becoming invalid domain orders.
+   */
   @Test
   void testParseOrdersMissingOrderProductTitleOrTitleRecord() {
     response.getRecords().stream()
@@ -163,5 +186,44 @@ class OrderParsingUtilTest {
     Map<String, Order> ordersMapBySid = parsedOrders.getOrdersMapBySid();
     assertNotNull(ordersMapBySid);
     assertEquals(0, ordersMapBySid.size());
+  }
+
+  /**
+   * Verifies parser increments heads when additional pet flag is set.
+   *
+   * <p>The extra pet consumes one additional head slot beyond the title baseline.
+   */
+  @Test
+  void testParseOrdersAddsHeadForAdditionalPet() {
+    response.getRecords().stream()
+        .filter(record -> "sidOrderRecord".equals(record.getSid()))
+        .findFirst()
+        .ifPresent(record -> record.setAdditionalPet("Yes"));
+
+    ParsedOrders parsedOrders = OrderParsingUtil.parseOrders(response, OrderType.PRIORITY);
+
+    Order parsedOrder = parsedOrders.getOrdersMapBySid().get("sidOrderRecord");
+    assertNotNull(parsedOrder);
+    assertTrue(parsedOrder.isAdditionalPet());
+    assertEquals(4, parsedOrder.getHeads());
+  }
+
+  /**
+   * Verifies unknown product titles keep default one head.
+   *
+   * <p>This scenario ensures parser remains resilient for titles not yet present in enum catalog.
+   */
+  @Test
+  void testParseOrdersUsesDefaultHeadsForUnknownTitle() {
+    response.getRecords().stream()
+        .filter(record -> "sidProductTitle".equals(record.getSid()))
+        .findFirst()
+        .ifPresent(record -> record.setPrimary("Unknown Product"));
+
+    ParsedOrders parsedOrders = OrderParsingUtil.parseOrders(response, OrderType.PRIORITY);
+
+    Order parsedOrder = parsedOrders.getOrdersMapBySid().get("sidOrderRecord");
+    assertNotNull(parsedOrder);
+    assertEquals(1, parsedOrder.getHeads());
   }
 }

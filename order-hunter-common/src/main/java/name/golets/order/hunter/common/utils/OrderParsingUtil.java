@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import name.golets.order.hunter.common.constants.OrderConstants;
+import name.golets.order.hunter.common.enums.OrderTitles;
 import name.golets.order.hunter.common.enums.OrderType;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.common.model.OrdersResponse;
@@ -28,6 +29,10 @@ public class OrderParsingUtil {
 
   /**
    * Parses response records into root and helper order maps.
+   *
+   * <p>Each created order receives a head count resolved from {@link OrderTitles} by product title.
+   * If the title is unknown, a default of 1 head is used. If additional pet is selected for an
+   * order, one extra head is added on top of the resolved base count.
    *
    * @param response source response containing raw records
    * @param orderType optional forced order type; when null type is inferred from each record
@@ -75,6 +80,8 @@ public class OrderParsingUtil {
       OrderType currentOrderType = orderType != null ? orderType : identifyOrderType(orderRecord);
       long now = System.currentTimeMillis();
       boolean recordHelper = isOrderHelper(productTitle);
+      boolean additionalPet = YES.equalsIgnoreCase(orderRecord.getAdditionalPet());
+      int heads = resolveHeads(productTitle, additionalPet);
 
       Order order =
           new Order()
@@ -88,7 +95,8 @@ public class OrderParsingUtil {
               .setArtistName(artistName)
               .setDesignStatus(orderRecord.getDesignStatus())
               .setRecordHelper(recordHelper)
-              .setAdditionalPet(YES.equalsIgnoreCase(orderRecord.getAdditionalPet()));
+              .setAdditionalPet(additionalPet)
+              .setHeads(heads);
 
       boolean validOrder = isValidOrder(order);
       if (!validOrder) {
@@ -161,5 +169,10 @@ public class OrderParsingUtil {
 
   private static boolean isTemplate(String name) {
     return name.endsWith("_T");
+  }
+
+  private static int resolveHeads(String productTitle, boolean additionalPet) {
+    int heads = OrderTitles.getHeadsOrDefault(productTitle, 1);
+    return additionalPet ? heads + 1 : heads;
   }
 }
