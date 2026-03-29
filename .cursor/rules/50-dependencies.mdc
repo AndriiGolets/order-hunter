@@ -6,6 +6,7 @@ alwaysApply: false
 
 # Dependency Rules
 
+- Add dependencies only to modules. Don`t add dependencies to the parent pom
 - Prefer Spring Boot managed dependency versions.
 - Do not add libraries that duplicate existing capabilities.
 - Explain every new dependency in one sentence.
