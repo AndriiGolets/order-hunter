@@ -25,8 +25,6 @@
         <checkstyle.maven.plugin.version>3.6.0</checkstyle.maven.plugin.version>
         <spotbugs.maven.plugin.version>4.9.8.1</spotbugs.maven.plugin.version>
         <maven.compiler.plugin.version>3.14.1</maven.compiler.plugin.version>
-        <errorprone.version>2.40.0</errorprone.version>
-        <nullaway.version>0.12.9</nullaway.version>
         <maven.surefire.plugin.version>3.5.4</maven.surefire.plugin.version>
         <junit.jupiter.version>5.13.4</junit.jupiter.version>
         <archunit.version>1.4.1</archunit.version>
@@ -135,8 +133,10 @@
                 <version>${maven.compiler.plugin.version}</version>
                 <configuration>
                     <release>${maven.compiler.release}</release>
-                    <compilerId>javac-with-errorprone</compilerId>
-                    <forceLegacyJavacApi>true</forceLegacyJavacApi>
+                    <jdkToolchain>
+                        <version>${java.version}</version>
+                        <vendor>oracle</vendor>
+                    </jdkToolchain>
                     <showWarnings>true</showWarnings>
                     <annotationProcessorPaths>
                         <path>
@@ -159,23 +159,6 @@
                         </configuration>
                     </execution>
                 </executions>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.codehaus.plexus</groupId>
-                        <artifactId>plexus-compiler-javac-errorprone</artifactId>
-                        <version>2.16.0</version>
-                    </dependency>
-                    <dependency>
-                        <groupId>com.google.errorprone</groupId>
-                        <artifactId>error_prone_core</artifactId>
-                        <version>${errorprone.version}</version>
-                    </dependency>
-                    <dependency>
-                        <groupId>com.uber.nullaway</groupId>
-                        <artifactId>nullaway</artifactId>
-                        <version>${nullaway.version}</version>
-                    </dependency>
-                </dependencies>
             </plugin>
 
             <plugin>

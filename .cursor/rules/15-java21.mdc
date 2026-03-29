@@ -1,0 +1,13 @@
+---
+description: Java language level and feature usage guidance
+globs: **/*.java
+alwaysApply: true
+---
+
+# Java 21 Rules
+
+- Treat Java 21 as the baseline language level across all modules.
+- You may use Java features available up to Java 21 when they improve clarity or safety.
+- Prefer stable Java 21 features over custom utility abstractions when equivalent.
+- Do not use preview or incubator features unless explicitly requested.
+- Keep compatibility with configured build plugins and static analysis checks.
