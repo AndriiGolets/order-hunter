@@ -5,9 +5,9 @@ import reactor.core.publisher.Mono;
 /**
  * Base contract for a small reactive unit of work used inside a flow.
  *
- * @param <TContext> context type shared across stages in one flow run
+ * @param <ContextT> context type shared across stages in one flow run
  */
-public interface Stage<TContext> {
+public interface Stage<ContextT> {
 
   /**
    * Executes this stage using the provided flow context.
@@ -15,5 +15,5 @@ public interface Stage<TContext> {
    * @param context per-flow-run context
    * @return completion signal for this stage
    */
-  Mono<Void> execute(TContext context);
+  Mono<Void> execute(ContextT context);
 }

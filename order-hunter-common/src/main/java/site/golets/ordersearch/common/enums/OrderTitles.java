@@ -1,9 +1,11 @@
-package site.golets.ordersearch.common.enums;
+package name.golets.order.hunter.common.enums;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import lombok.Getter;
 
+/** Catalog of supported product titles and their expected head counts. */
 public enum OrderTitles {
   THE_ROSY_AFTERNOON("The Rosy Afternoon", 2),
   THE_QUEEN_AND_HER_BABY("The Queen & Her Baby", 2),
@@ -117,7 +119,7 @@ public enum OrderTitles {
 
   static {
     for (OrderTitles orderTitle : values()) {
-      TITLE_MAP.put(orderTitle.title.toLowerCase(), orderTitle);
+      TITLE_MAP.put(orderTitle.title.toLowerCase(Locale.ROOT), orderTitle);
     }
   }
 
@@ -130,8 +132,9 @@ public enum OrderTitles {
     return headCount;
   }
 
+  /** Resolves enum entry by normalized product title. */
   public static OrderTitles getOrderTitleByTitle(String title) {
-    OrderTitles orderTitle = TITLE_MAP.get(title.toLowerCase());
+    OrderTitles orderTitle = TITLE_MAP.get(title.toLowerCase(Locale.ROOT));
     if (orderTitle == null) {
       throw new IllegalArgumentException("OrderTitle not found for title: " + title);
     }

@@ -1,9 +1,10 @@
-package site.golets.ordersearch.common.utils;
+package name.golets.order.hunter.common.utils;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
+/** Collection transformation helpers used by parsing and mapping code. */
 public class TransformUtil {
 
   /**

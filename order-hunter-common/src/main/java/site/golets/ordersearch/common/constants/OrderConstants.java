@@ -1,5 +1,6 @@
-package site.golets.ordersearch.common.constants;
+package name.golets.order.hunter.common.constants;
 
+/** Shared constants used when parsing order records from external responses. */
 public class OrderConstants {
 
   public static final String ARTIST_OBJECT_ID = "object.custom.artists";

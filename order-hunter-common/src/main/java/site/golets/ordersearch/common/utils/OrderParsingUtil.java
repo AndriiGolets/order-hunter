@@ -1,4 +1,4 @@
-package site.golets.ordersearch.common.utils;
+package name.golets.order.hunter.common.utils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -6,15 +6,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import name.golets.order.hunter.common.constants.OrderConstants;
+import name.golets.order.hunter.common.model.Order;
+import name.golets.order.hunter.common.model.OrderType;
+import name.golets.order.hunter.common.model.OrdersResponse;
+import name.golets.order.hunter.common.model.ParsedOrders;
+import name.golets.order.hunter.common.model.Record;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import site.golets.ordersearch.common.constants.OrderConstants;
-import site.golets.ordersearch.common.model.Order;
-import site.golets.ordersearch.common.model.OrderType;
-import site.golets.ordersearch.common.model.OrdersResponse;
-import site.golets.ordersearch.common.model.ParsedOrders;
-import site.golets.ordersearch.common.model.Record;
 
+/** Parses raw API records into normalized order structures used by the application. */
 public class OrderParsingUtil {
 
   private static final Logger log = LoggerFactory.getLogger(OrderParsingUtil.class);
@@ -25,6 +26,13 @@ public class OrderParsingUtil {
           .map(title -> title.toLowerCase(Locale.ROOT))
           .toArray(String[]::new);
 
+  /**
+   * Parses response records into root and helper order maps.
+   *
+   * @param response source response containing raw records
+   * @param orderType optional forced order type; when null type is inferred from each record
+   * @return parsed orders grouped by root orders and helper orders
+   */
   public static ParsedOrders parseOrders(OrdersResponse response, OrderType orderType) {
     List<Record> records = response != null ? response.getRecords() : null;
     if (records == null || records.isEmpty()) {

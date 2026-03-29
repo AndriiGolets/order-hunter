@@ -1,10 +1,11 @@
-package site.golets.ordersearch.common.model;
+package name.golets.order.hunter.common.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+/** Raw record entity mapped directly from external order API documents. */
 @Data
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Accessors(chain = true)

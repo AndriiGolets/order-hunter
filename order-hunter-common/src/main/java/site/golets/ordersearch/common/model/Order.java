@@ -1,9 +1,10 @@
-package site.golets.ordersearch.common.model;
+package name.golets.order.hunter.common.model;
 
 import java.io.Serializable;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+/** Parsed order domain model shared between manager and worker modules. */
 @Data
 @Accessors(chain = true)
 public class Order implements Comparable<Order>, Serializable {

@@ -1,4 +1,4 @@
-package name.golets.order.hunter.order_hunter_worker;
+package name.golets.order.hunter.orderhunterworker;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
@@ -11,7 +11,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 @AnalyzeClasses(packagesOf = OrderHunterWorkerApplication.class)
 class WorkerArchitectureRulesTest {
 
-  private static final String BASE_PACKAGE = "name.golets.order.hunter.order_hunter_worker";
+  private static final String BASE_PACKAGE = "name.golets.order.hunter.orderhunterworker";
 
   /**
    * Ensures controller code stays state-focused and does not orchestrate flow or stage execution.

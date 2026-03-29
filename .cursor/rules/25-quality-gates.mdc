@@ -1,0 +1,12 @@
+---
+description: Enforce Maven quality gates before finishing changes
+globs: **/*
+alwaysApply: true
+---
+
+# Quality Gates Rules
+
+- Treat Spotless, Checkstyle, SpotBugs, and tests as required quality gates.
+- Run `mvn clean install` before considering a task complete when code was changed.
+- If any plugin reports violations, fix the code or configuration in the same change.
+- Do not leave the branch with known plugin violations.

@@ -1,10 +1,11 @@
-package site.golets.ordersearch.common.model;
+package name.golets.order.hunter.common.model;
 
 import java.util.HashMap;
 import java.util.Map;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+/** Aggregated parsing output with root orders and helper orders. */
 @Data
 @Accessors(chain = true)
 public class ParsedOrders {
@@ -18,8 +19,11 @@ public class ParsedOrders {
    */
   private Map<String, Map<String, Order>> ordersHelperMapByName = new HashMap<>();
 
+  /** Merges one parsed-orders payload into this payload. */
   public ParsedOrders merge(ParsedOrders po) {
-    if (po == null) return this;
+    if (po == null) {
+      return this;
+    }
     ordersMapBySid.putAll(po.getOrdersMapBySid());
     po.getOrdersHelperMapByName()
         .forEach(
@@ -35,6 +39,7 @@ public class ParsedOrders {
     return this;
   }
 
+  /** Merges two parsed-orders payloads into this payload. */
   public ParsedOrders merge(ParsedOrders po1, ParsedOrders po2) {
 
     ordersMapBySid.putAll(po1.getOrdersMapBySid());

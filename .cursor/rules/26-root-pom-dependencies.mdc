@@ -1,0 +1,11 @@
+---
+description: Keep root pom free of dependencies
+globs: pom.xml
+alwaysApply: true
+---
+
+# Root POM Dependency Policy
+
+- Do not add `dependencies` or `dependencyManagement` sections in the root `pom.xml`.
+- Root `pom.xml` may contain build/verification plugins and shared plugin configuration only.
+- Add runtime/test dependencies in module `pom.xml` files instead.

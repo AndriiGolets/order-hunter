@@ -1,4 +1,4 @@
-package name.golets.order.hunter.order_hunter_worker;
+package name.golets.order.hunter.orderhunterworker;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 

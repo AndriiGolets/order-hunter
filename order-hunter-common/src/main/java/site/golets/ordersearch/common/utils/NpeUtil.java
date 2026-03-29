@@ -1,8 +1,9 @@
-package site.golets.ordersearch.common.utils;
+package name.golets.order.hunter.common.utils;
 
 import java.util.Map;
 import java.util.function.Function;
 
+/** Null-safe helpers for map extraction patterns. */
 public class NpeUtil {
 
   /**

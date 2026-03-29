@@ -1,4 +1,4 @@
-package site.golets.ordersearch.common.model;
+package name.golets.order.hunter.common.model;
 
 /** Enumeration of supported order types. */
 public enum OrderType {

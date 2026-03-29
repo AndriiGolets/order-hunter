@@ -1,4 +1,4 @@
-package site.golets.ordersearch.common.utils;
+package name.golets.order.hunter.common.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -8,14 +8,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
 import java.util.Map;
+import name.golets.order.hunter.common.constants.OrderConstants;
+import name.golets.order.hunter.common.model.Order;
+import name.golets.order.hunter.common.model.OrderType;
+import name.golets.order.hunter.common.model.OrdersResponse;
+import name.golets.order.hunter.common.model.ParsedOrders;
+import name.golets.order.hunter.common.model.Record;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import site.golets.ordersearch.common.constants.OrderConstants;
-import site.golets.ordersearch.common.model.Order;
-import site.golets.ordersearch.common.model.OrderType;
-import site.golets.ordersearch.common.model.OrdersResponse;
-import site.golets.ordersearch.common.model.ParsedOrders;
-import site.golets.ordersearch.common.model.Record;
 
 class OrderParsingUtilTest {
 
