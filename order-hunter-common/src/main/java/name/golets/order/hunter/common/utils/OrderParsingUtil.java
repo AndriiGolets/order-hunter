@@ -8,7 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import name.golets.order.hunter.common.constants.OrderConstants;
 import name.golets.order.hunter.common.model.Order;
-import name.golets.order.hunter.common.model.OrderType;
+import site.golets.ordersearch.common.enums.OrderType;
 import name.golets.order.hunter.common.model.OrdersResponse;
 import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.common.model.Record;

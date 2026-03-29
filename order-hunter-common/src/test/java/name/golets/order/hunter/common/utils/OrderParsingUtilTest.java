@@ -1,4 +1,4 @@
-package name.golets.order.hunter.common.utils;
+package name.golets.order.hunter.common.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,7 +10,7 @@ import java.util.Arrays;
 import java.util.Map;
 import name.golets.order.hunter.common.constants.OrderConstants;
 import name.golets.order.hunter.common.model.Order;
-import name.golets.order.hunter.common.model.OrderType;
+import site.golets.ordersearch.common.enums.OrderType;
 import name.golets.order.hunter.common.model.OrdersResponse;
 import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.common.model.Record;
@@ -72,7 +72,7 @@ class OrderParsingUtilTest {
 
   @Test
   void testParseOrdersProperParsing() {
-    ParsedOrders parsedOrders = OrderParsingUtil.parseOrders(response, OrderType.PRIORITY);
+    ParsedOrders parsedOrders = name.golets.order.hunter.common.utils.OrderParsingUtil.parseOrders(response, OrderType.PRIORITY);
 
     assertNotNull(parsedOrders);
 
