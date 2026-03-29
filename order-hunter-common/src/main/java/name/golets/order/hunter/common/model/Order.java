@@ -3,6 +3,7 @@ package name.golets.order.hunter.common.model;
 import java.io.Serializable;
 import lombok.Data;
 import lombok.experimental.Accessors;
+import name.golets.order.hunter.common.enums.OrderType;
 
 /** Parsed order domain model shared between manager and worker modules. */
 @Data
