@@ -1,0 +1,14 @@
+---
+description: Dependency hygiene and build rules
+globs: pom.xml, build.gradle, build.gradle.kts
+alwaysApply: false
+---
+
+# Dependency Rules
+
+- Prefer Spring Boot managed dependency versions.
+- Do not add libraries that duplicate existing capabilities.
+- Explain every new dependency in one sentence.
+- Prefer test-scoped dependencies when possible.
+- Prefer Boot starters over manual dependency assembly when appropriate.
+- Keep runtime dependency graph minimal and explicit.

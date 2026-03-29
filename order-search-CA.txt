@@ -1,0 +1,73 @@
+﻿# Order Search Concept Architecture (CA) 
+
+## 1. Project Concept Analysis
+The project is a competitive watchdog that hunts for orders on a remote REST server and must save matching orders faster than other clients.
+Orders appear in short bursts (e.g., multiple batches within seconds), then disappear for long periods.
+The architecture must optimize end-to-end latency (discover -> filter -> save), maintain high reliability under server overload,
+and control infrastructure cost. Because many competitors poll and save simultaneously, the system must also handle throttling, contention, and duplicate work.
+
+## 2. Component Analysis
+
+### 2.1 order-hunter-worker (Reactive Worker)
+- **Responsibility**: Polls the remote server, filters orders by required params, and immediately saves matches via POST. Fetch and save are intentionally in one service to minimize delay.
+- **Technology**: Spring Boot + Spring WebFlux (reactive).
+- **Behavior**:
+- Event-driven start/stop via SQS.
+- Parallel saves per poll cycle, then wait for all saves before the next GET.
+- Save timeout around 5 seconds.
+- Scales horizontally for higher win probability.
+
+### 2.2 order-hunter-manager (Orchestrator)
+- **Responsibility**: Starts/stops hunters, controls the required number of saved orders, de-duplicates results, and notifies Viber-Bot for each distinct saved order. Manages EC2 scheduling for cost efficiency.
+- **Technology**: Spring Boot + Spring MVC.
+- **Behavior**:
+- Receives `SAVED` events from hunters.
+- Maintains distinct order IDs and stops hunters when target is reached.
+- Starts EC2 instances ahead of expected order windows.
+
+## 3. Detailed Architecture Description
+
+### 3.1 End-to-End Goal and Constraints
+- Primary objective is to win the competition by saving orders faster than other clients.
+- Saving more than the target count is acceptable; overshoot is not a failure.
+- No synchronization or shared coordination across hunters; hunters operate independently to avoid added latency.
+- Multiple EC2 instances with distinct public IPs are used to imitate different users and reduce per-IP throttling risk.
+
+### 3.2 Hunter Execution Model (order-hunter-worker)
+- Each hunter runs a strict GET -> filter -> POST cycle and blocks the next GET until all POSTs from the current cycle complete.
+- Blocking is intentional to limit per-IP pressure and avoid local burst amplification.
+- POST timeouts are enforced to cap stall duration during bursts.
+- Poll cadence uses a one-time randomized start stagger after START to avoid accidental synchronization without ongoing per-cycle jitter.
+
+### 3.3 Concurrency and Resource Limits
+- WebFlux must be configured with explicit strict limits for in-flight GETs, POSTs, and buffers.
+- Concurrency is bounded per hunter to keep latency low and prevent local resource saturation.
+- Backoff can be applied locally on 429/5xx responses, without coordinating across hunters.
+
+### 3.4 Duplicate Saves Strategy
+- Duplicate saves across hunters are intentional to maximize win probability.
+- No centralized de-duplication or claiming is used to avoid synchronization delays.
+- The system accepts concurrent saves of the same order; the remote server determines the winner.
+
+### 3.5 Stop Semantics and Drain
+- On STOP, hunters cease polling immediately.
+- In-flight saves are allowed to complete within a short grace period; connections are not force-terminated.
+- This reduces ambiguity about save success while keeping stop latency low.
+
+### 3.6 Manager Event Handling (order-hunter-manager)
+- `SAVED` events can be duplicated and out of order; manager de-duplicates by `orderId`.
+- Overshoot of target count is acceptable and does not require rollback.
+- Manager notifies Viber-Bot only for distinct saved orders.
+
+### 3.7 Metrics and Observability
+- Metrics are required (request latency, internal handling latency, errors), but must be low-overhead to avoid slowing hunters.
+- Metrics should be exposed for querying by external metrics sever.
+
+
+## 4. Proposed Data Flow (Aligned with BRD)
+1. Manager sends `START(targetCount)` to SQS.
+2. Hunters receive START and begin independent WebFlux polling with local jitter.
+3. Each hunter performs a blocking GET -> filter -> POST cycle with strict in-flight limits and POST timeouts.
+4. Successful saves emit `SAVED(orderId, hunterId, attemptId)` events.
+5. Manager de-duplicates by `orderId`, notifies Viber-Bot, and when `count >= targetCount` sends `STOP` (overshoot accepted).
+6. Hunters stop polling immediately and allow in-flight saves to finish within a short grace period before exit.

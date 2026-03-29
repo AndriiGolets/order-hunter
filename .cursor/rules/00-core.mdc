@@ -1,0 +1,15 @@
+---
+description: Core repository-wide AI behavior and safety rules
+globs: **/*
+alwaysApply: true
+---
+
+# Core Rules
+
+- Read and follow AI_RULES.md before proposing code changes.
+- Make the smallest correct change.
+- Do not modify unrelated files.
+- Do not introduce new abstractions unless they clearly remove duplication across multiple real usages.
+- Prefer explicit code over magic.
+- If a task implies architecture changes, explain the impact before editing.
+- Never generate placeholder code, fake implementations, or TODO-only stubs unless explicitly requested.

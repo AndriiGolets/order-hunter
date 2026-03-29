@@ -1,0 +1,15 @@
+---
+description: Reactive programming rules for Spring WebFlux code
+globs: src/main/java/**/*.java
+alwaysApply: false
+---
+
+# WebFlux Rules
+
+- Never use block(), blockOptional(), or join-like blocking in production code.
+- Never call subscribe() in application flow code.
+- Keep reactive chains readable; extract private methods instead of deep nesting.
+- Prefer Mono/Flux end-to-end in reactive paths.
+- Use onErrorResume/onErrorMap intentionally; do not swallow errors.
+- Prefer timeout/retry only when explicitly justified.
+- Avoid converting reactive code into imperative code just for convenience.

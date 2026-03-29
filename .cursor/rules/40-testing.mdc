@@ -1,0 +1,15 @@
+---
+description: Testing strategy and quality rules
+globs: src/test/java/**/*.java, src/main/java/**/*.java
+alwaysApply: false
+---
+
+# Testing Rules
+
+- New business logic should include tests.
+- Prefer unit tests for pure logic.
+- Prefer integration/slice tests for Spring wiring.
+- Avoid mocking simple value objects.
+- For WebFlux endpoints, prefer WebTestClient.
+- Architecture constraints should be enforced with ArchUnit tests.
+- Tests should verify behavior, not implementation details.

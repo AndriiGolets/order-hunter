@@ -1,0 +1,18 @@
+---
+description: Architecture rules for Java Spring Boot project structure
+globs: src/main/java/**/*.java, src/test/java/**/*.java
+alwaysApply: true
+---
+
+# Architecture Rules
+
+- Follow package-by-feature.
+- Keep controllers thin.
+- Business logic belongs in services/use-case classes.
+- Domain logic must not depend on transport DTOs.
+- Infrastructure concerns must stay isolated.
+- Avoid creating extra layers like Manager/Facade/Helper unless justified.
+- Prefer constructor injection only.
+- No field injection.
+- No circular package dependencies.
+- Before creating a new class, check whether an existing class should be extended.

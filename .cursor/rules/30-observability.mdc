@@ -1,0 +1,23 @@
+---
+description: Observability and tracing rules for Micrometer + WebFlux + WebClient
+globs: src/main/java/**/*.java, src/main/resources/application*.yml
+alwaysApply: false
+---
+
+# Observability Rules
+
+- Use Micrometer Observation as the primary application-level observability API.
+- Prefer ObservationRegistry and Observation in business code.
+- Avoid direct tracer/span APIs unless there is a specific low-level need.
+- Add business observations only at meaningful boundaries:
+  - use-case execution
+  - external HTTP integration
+  - expensive fallback path
+- Do not create spans for every method.
+- Never put IDs in low-cardinality tags.
+- Put IDs only in high-cardinality tags when truly needed.
+- For WebClient, always use injected WebClient.Builder.
+- Never use WebClient.create(...).
+- Use URI templates instead of string concatenation.
+- Preserve trace correlation in logs.
+- Keep spring.reactor.context-propagation enabled.
