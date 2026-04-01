@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+  <!-- Spring injects a shared mutable service; holding the reference is intentional. -->
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+    <Or>
+      <Class name="name.golets.order.hunter.orderhunterworker.controller.SqsEventController"/>
+      <Class name="name.golets.order.hunter.orderhunterworker.flow.PollOrdersFlow"/>
+      <Class name="name.golets.order.hunter.orderhunterworker.integration.airportal.ObservedAirportalClient"/>
+      <Class name="name.golets.order.hunter.orderhunterworker.starter.WorkerStarter"/>
+    </Or>
+  </Match>
+  <!-- Flow context is a mutable session-scoped holder passed through all stages. -->
+  <Match>
+    <Class name="name.golets.order.hunter.orderhunterworker.flow.PollOrdersFlowContext"/>
+    <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+  <Match>
+    <Class name="name.golets.order.hunter.orderhunterworker.flow.PollOrdersFlowContext"/>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+  </Match>
+</FindBugsFilter>

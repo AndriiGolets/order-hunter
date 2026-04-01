@@ -1,0 +1,20 @@
+order-hunter:
+  airportalHost: "airportal.stacker.app"
+  saveArtistNamePath: "/api/records/"
+  freeOrdersPath: "/api/objects/object.custom.orders_v3_2/records/?orders_v3_2__shipping_title___notcontains=EXPED&orders_v3_2__date___gt=2023-05-01&orders_v3_2__design_status___isempty=true&orders_v3_2__artist___isempty=true&orders_v3_2__customer_status___neq=Approved&orders_v3_2__product_title___isnotempty=true&orders_v3_2__shipping_title___neq=notpaid&orders_v3_2__name___notcontains=etsy&orders_v3_2__egle_status___isempty=true&orders_v3_2__name___notcontains=AMZ&orders_v3_2__for_training___isempty=true&orders_v3_2__order_appear_in_stacker_ai=false&orders_v3_2__shipping_title___notcontains=SCHNELLER&orders_v3_2__name___notcontains=_T&orders_v3_2__source_fast_track_order___isempty=true&_dereference=true&_dereferenceList=%5B%5D&_includeFields=%5B%22orders_v3_2__shipping_title%22%2C%22orders_v3_2__date%22%2C%22orders_v3_2__design_status%22%2C%22orders_v3_2__artist%22%2C%22orders_v3_2__customer_status%22%2C%22orders_v3_2__product_title%22%2C%22orders_v3_2__name%22%2C%22orders_v3_2__egle_status%22%2C%22orders_v3_2__for_training%22%2C%22orders_v3_2__order_appear_in_stacker_ai%22%2C%22orders_v3_2__source_fast_track_order%22%2C%22orders_v3_2__product_variant%22%2C%22orders_v3_2__photo_not_ok%22%2C%22orders_v3_2__preview_customer%22%5D&order_by=orders_v3_2__date&_count=30"
+  priorityOrdersPath: "/api/objects/object.custom.orders_v3_2/records/?orders_v3_2__shipping_title___notcontains=FREE&orders_v3_2__egle_status___isempty=true&orders_v3_2__training_status___isempty=true&orders_v3_2__artist___isempty=true&orders_v3_2__date___gt=2021-05-01&orders_v3_2__for_training___neq=Yes&orders_v3_2__shipping_title___notcontains=not%20paid&orders_v3_2__shipping_title___neq=notpaid&orders_v3_2__name___notcontains=etsy&orders_v3_2__name___notcontains=AMZ&orders_v3_2__order_appear_in_stacker_ai=false&orders_v3_2__shipping_title___notcontains=Standard&orders_v3_2__source_fast_track_order___isempty=true&orders_v3_2__shipping_title___isnotempty=true&_dereference=true&_dereferenceList=%5B%5D&_includeFields=%5B%22orders_v3_2__shipping_title%22%2C%22orders_v3_2__egle_status%22%2C%22orders_v3_2__training_status%22%2C%22orders_v3_2__artist%22%2C%22orders_v3_2__date%22%2C%22orders_v3_2__for_training%22%2C%22orders_v3_2__name%22%2C%22orders_v3_2__order_appear_in_stacker_ai%22%2C%22orders_v3_2__source_fast_track_order%22%2C%22orders_v3_2__product_title%22%2C%22orders_v3_2__product_variant%22%2C%22orders_v3_2__photo_not_ok%22%2C%22orders_v3_2__preview_customer%22%5D&order_by=orders_v3_2__date&_count=30"
+  fastTrackOrdersPath: "/api/objects/object.custom.orders_v3_2/records/?orders_v3_2__egle_status___isempty=true&orders_v3_2__artist___isempty=true&orders_v3_2__date___gt=2021-05-01&orders_v3_2__for_training___neq=Yes&orders_v3_2__shipping_title___notcontains=not%20paid&orders_v3_2__shipping_title___neq=notpaid&orders_v3_2__name___notcontains=etsy&orders_v3_2__name___notcontains=AMZ&orders_v3_2__source_fast_track_order=Yes&_dereference=true&_dereferenceList=%5B%5D&_includeFields=%5B%22orders_v3_2__egle_status%22%2C%22orders_v3_2__artist%22%2C%22orders_v3_2__date%22%2C%22orders_v3_2__for_training%22%2C%22orders_v3_2__shipping_title%22%2C%22orders_v3_2__name%22%2C%22orders_v3_2__source_fast_track_order%22%2C%22orders_v3_2__product_title%22%2C%22orders_v3_2__product_variant%22%2C%22orders_v3_2__photo_not_ok%22%2C%22orders_v3_2__preview_customer%22%5D&order_by=orders_v3_2__date&_count=30"
+  artistId: "art_rec4igzElr7QBsIoJ"
+  apiToken: "ab371e22-24aa-405a-b459-41238c4d130d"
+  stackId: "stack.LpRO15"
+  commandsQueue: "order-hunter-commands"
+  eventsQueue: "order-hunter-events"
+  awsRegion: "eu-central-1"
+  hunterId: ${spring.application.name}
+  maxParallelOrdersToSaveThreads: 5
+  beforeOrderSavingJitterMax: 20
+  betweenPollsJitterMax: 500
+  disableJitterRandomize: false
+  pollingTimeout: 5000
+  savingTimeout: 5000
+

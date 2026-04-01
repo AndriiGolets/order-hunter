@@ -13,6 +13,8 @@ class WorkerArchitectureRulesTest {
 
   private static final String BASE_PACKAGE = "name.golets.order.hunter.orderhunterworker";
 
+  private static final String CONFIG_PACKAGE = BASE_PACKAGE + ".config";
+
   /**
    * Ensures controller code stays state-focused and does not orchestrate flow or stage execution.
    */
@@ -37,11 +39,14 @@ class WorkerArchitectureRulesTest {
       noClasses()
           .that()
           .resideInAPackage(BASE_PACKAGE + "..")
+          .and()
+          .resideOutsideOfPackage(CONFIG_PACKAGE)
           .should()
           .callMethod(WebClient.class, "create")
           .allowEmptyShould(true)
           .because(
-              "outbound clients must be created from injected auto-configured WebClient.Builder");
+              "outbound clients must be created from the shared WebClient.Builder bean "
+                  + "(defined in ..config.. only)");
 
   /** Prevents ad-hoc outbound client creation with explicit base URL string. */
   @ArchTest
@@ -49,11 +54,14 @@ class WorkerArchitectureRulesTest {
       noClasses()
           .that()
           .resideInAPackage(BASE_PACKAGE + "..")
+          .and()
+          .resideOutsideOfPackage(CONFIG_PACKAGE)
           .should()
           .callMethod(WebClient.class, "create", String.class)
           .allowEmptyShould(true)
           .because(
-              "outbound clients must be created from injected auto-configured WebClient.Builder");
+              "outbound clients must be created from the shared WebClient.Builder bean "
+                  + "(defined in ..config.. only)");
 
   /** Prevents ad-hoc builder creation and enforces injected builder usage. */
   @ArchTest
@@ -61,11 +69,14 @@ class WorkerArchitectureRulesTest {
       noClasses()
           .that()
           .resideInAPackage(BASE_PACKAGE + "..")
+          .and()
+          .resideOutsideOfPackage(CONFIG_PACKAGE)
           .should()
           .callMethod(WebClient.class, "builder")
           .allowEmptyShould(true)
           .because(
-              "ad-hoc WebClient.builder() bypasses shared observability and client configuration");
+              "use the shared WebClient.Builder bean from ..config..; ad-hoc builder() elsewhere "
+                  + "bypasses shared observability");
 
   /** Disallows manual tracing APIs in application layer code. */
   @ArchTest
