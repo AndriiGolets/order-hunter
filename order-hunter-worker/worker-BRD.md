@@ -64,23 +64,29 @@ Implement a worker business flow that receives start/stop/status commands from S
 ### 4.1 pollRecordsStage
 
 - Calls combined URL endpoint with reactive WebClient.
-- Fetches `List<Record>` payload from source API.
-- Produces stage result containing raw records and retrieval metadata.
+- Fetches `OrdersResponse` payload from source API.
+- Produces stage result containing the full `OrdersResponse`.
 - WebClient must always include headers: `xApiToken`, `xStackId`.
 - Observation rule for polling: do not attach full response body to span/events; add only `resultInfo.totalResults` as an observation tag.
+- On polling error, stage must fail fast and propagate exception to flow-level `errorHandlingStage`.
+- Writes debug log with stage result counts and session marker.
 
 ### 4.2 parseOrdersStage
 
-- Uses `OrderParsingUtil` to transform `Record` payloads into parsed orders.
-- Preserves order typing using requested `orderTypes` from current session state.
+- Uses `OrderParsingUtil` to transform `OrdersResponse` into `ParsedOrders`.
+- No additional business filtering in this stage.
+- Writes debug log with parsed result counts and session marker.
 
 ### 4.3 filterRecordsStage
 
-- Sorts main orders by heads descending (higher heads first).
-- Selects minimum subset needed to reach `headsToTake`.
-- Preference rule: choose larger-head order even if it overshoots target.
-- Removes orders already taken in previous sessions/ticks.
-- Produces filtered main orders and helper references.
+- Reads candidates only from `ParsedOrders.ordersMapBySid`.
+- Does not filter or mutate `ParsedOrders.ordersHelperMapByName`.
+- Filters candidate orders by `orderTypes` from `StartEvent` (stored in `WorkerStateManager`).
+- Excludes orders already saved in previous runs/ticks using saved order SIDs from `WorkerStateManager`.
+- Sorts remaining orders by heads descending (higher heads first).
+- Collects minimum subset to fulfill `headsToTake` with higher-head preference (overshoot is allowed).
+- Stores filtered orders in stage result, keeping original parsed maps unchanged.
+- Writes debug log with selected count/heads and session marker.
 
 ### 4.4 saveMainOrdersStage
 
@@ -110,9 +116,10 @@ Implement a worker business flow that receives start/stop/status commands from S
 ### 4.7 errorHandlingStage
 
 - Centralizes flow error strategy.
-- Maps technical failures to structured outcomes.
-- Ensures stage-level errors are logged with session correlation markers.
-- No retry logic: failed external operations are skipped after logging.
+- Receives propagated exceptions from preceding stages (including `pollRecordsStage` failures).
+- Logs errors with flow/session correlation markers.
+- Current behavior on error: stop the current flow run, handle error in this stage, and let next starter tick decide the next execution.
+- No retry logic in the same flow run.
 
 ## Parallel Save Failure Policy
 
@@ -128,6 +135,7 @@ Implement a worker business flow that receives start/stop/status commands from S
 - `StartEvent` switches state to active and sets flow targets.
 - `StopEvent` switches state to inactive and prevents new flow ticks.
 - Active state remains until explicit stop or completion logic is triggered by business rules.
+- All flow-stage logs must include a session marker derived from current session id.
 
 ## End-to-End Runtime View
 
