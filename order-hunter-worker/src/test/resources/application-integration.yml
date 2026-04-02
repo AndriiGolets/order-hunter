@@ -1,0 +1,14 @@
+# Overrides for OrderHunterIntegrationTest (see integration-tests-plan.md).
+order-hunter:
+  disable-jitter-randomize: true
+  between-polls-jitter-max: 500
+  polling-timeout: 15000
+  saving-timeout: 15000
+  max-parallel-orders-to-save-threads: 5
+  # Avoid ticking before JUnit @BeforeEach configures MockWebServer dispatch rules.
+  worker-auto-start: false
+
+logging:
+  level:
+    root: WARN
+    name.golets.order.hunter.worker: INFO

@@ -1,5 +1,6 @@
 package name.golets.order.hunter.worker.flow;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,16 +49,16 @@ class PollOrdersFlowTest {
             errorHandlingStage);
 
     RuntimeException boom = new RuntimeException("poll failed");
-    when(pollRecordsStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.error(boom));
-    when(parseOrdersStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.empty());
-    when(filterRecordsStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.empty());
-    when(saveMainOrdersStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.empty());
-    when(saveHelpersStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.empty());
-    when(notifySqsStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.empty());
-    when(errorHandlingStage.execute(org.mockito.ArgumentMatchers.any())).thenReturn(Mono.empty());
+    when(pollRecordsStage.execute(any())).thenReturn(Mono.error(boom));
+    when(parseOrdersStage.execute(any())).thenReturn(Mono.empty());
+    when(filterRecordsStage.execute(any())).thenReturn(Mono.empty());
+    when(saveMainOrdersStage.execute(any())).thenReturn(Mono.empty());
+    when(saveHelpersStage.execute(any())).thenReturn(Mono.empty());
+    when(notifySqsStage.execute(any())).thenReturn(Mono.empty());
+    when(errorHandlingStage.execute(any())).thenReturn(Mono.empty());
 
     StepVerifier.create(flow.start()).verifyComplete();
 
-    verify(errorHandlingStage).execute(org.mockito.ArgumentMatchers.any());
+    verify(errorHandlingStage).execute(any());
   }
 }

@@ -14,7 +14,12 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-/** Parallel PATCH saves for filtered main orders with bounded concurrency. */
+/**
+ * Parallel PATCH saves for filtered main orders with bounded concurrency.
+ *
+ * <p>{@link #execute} is wrapped in {@link Mono#defer} so {@code Mono.then(this::execute)} does not
+ * read the context until subscribe time (after prior stages have populated filter results).
+ */
 @Component
 public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(SaveMainOrdersStage.class);
@@ -42,24 +47,28 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
    */
   @Override
   public Mono<Void> execute(PollOrdersFlowContext context) {
-    SaveMainOrdersStageResult result = new SaveMainOrdersStageResult();
-    context.setSaveMainOrdersResult(result);
+    return Mono.defer(
+        () -> {
+          SaveMainOrdersStageResult result = new SaveMainOrdersStageResult();
+          context.setSaveMainOrdersResult(result);
 
-    if (context.getStateManager() == null) {
-      return Mono.empty();
-    }
-    List<Order> filteredOrders = readFilteredOrders(context);
-    if (filteredOrders.isEmpty()) {
-      log.debug(
-          context.getSessionMarker(),
-          "saveMainOrdersStage result stored for flowRunId={} savedCount=0",
-          context.getFlowRunId());
-      return Mono.empty();
-    }
+          if (context.getStateManager() == null) {
+            return Mono.empty();
+          }
+          List<Order> filteredOrders = readFilteredOrders(context);
+          if (filteredOrders.isEmpty()) {
+            log.debug(
+                context.getSessionMarker(),
+                "saveMainOrdersStage result stored for flowRunId={} savedCount=0",
+                context.getFlowRunId());
+            return Mono.empty();
+          }
 
-    return Flux.fromIterable(filteredOrders)
-        .flatMap(order -> saveOneMainOrder(context, result, order), maxParallelOrdersToSaveThreads)
-        .then(Mono.fromRunnable(() -> logResult(context, result)));
+          return Flux.fromIterable(filteredOrders)
+              .flatMap(
+                  order -> saveOneMainOrder(context, result, order), maxParallelOrdersToSaveThreads)
+              .then(Mono.fromRunnable(() -> logResult(context, result)));
+        });
   }
 
   private Mono<Void> saveOneMainOrder(

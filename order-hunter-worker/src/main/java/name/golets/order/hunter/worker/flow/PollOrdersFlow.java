@@ -59,6 +59,11 @@ public class PollOrdersFlow implements Flow {
     this.errorHandlingStage = errorHandlingStage;
   }
 
+  /**
+   * Runs stages one after another on the same {@link PollOrdersFlowContext}.
+   *
+   * @return completion when the pipeline finishes or after error handling
+   */
   @Override
   public Mono<Void> start() {
     PollOrdersFlowContext context = PollOrdersFlowContext.begin(workerStateManager);

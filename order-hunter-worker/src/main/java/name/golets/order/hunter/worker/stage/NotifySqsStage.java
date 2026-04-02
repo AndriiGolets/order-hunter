@@ -8,7 +8,6 @@ import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.event.OrderTaken;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
-import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +15,12 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
-/** Publishes {@link name.golets.order.hunter.worker.event.OrderTaken} to the outbound queue. */
+/**
+ * Publishes {@link name.golets.order.hunter.worker.event.OrderTaken} to the outbound queue.
+ *
+ * <p>{@link #execute} uses {@link Mono#defer} so the event is built after save stages complete when
+ * used in a {@code Mono.then} chain.
+ */
 @Component
 public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(NotifySqsStage.class);
@@ -42,25 +46,28 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
    */
   @Override
   public Mono<Void> execute(PollOrdersFlowContext context) {
-    if (context.getStateManager() == null) {
-      return Mono.empty();
-    }
-    reconcileHeadsConsistency(context);
-    OrderTaken event = buildOrderTakenEvent(context);
-    return orderTakenSqsPublisher
-        .publish(event)
-        .retryWhen(
-            Retry.backoff(RETRY_ATTEMPTS, Duration.ofMillis(300))
-                .maxBackoff(Duration.ofSeconds(2))
-                .doBeforeRetry(
-                    signal ->
-                        log.warn(
-                            context.getSessionMarker(),
-                            "notifySqsStage publish retry={} flowRunId={}",
-                            signal.totalRetries() + 1,
-                            context.getFlowRunId(),
-                            signal.failure())))
-        .doOnSuccess(ignored -> onPublished(context, event));
+    return Mono.defer(
+        () -> {
+          if (context.getStateManager() == null) {
+            return Mono.empty();
+          }
+          reconcileHeadsConsistency(context);
+          OrderTaken event = buildOrderTakenEvent(context);
+          return orderTakenSqsPublisher
+              .publish(event)
+              .retryWhen(
+                  Retry.backoff(RETRY_ATTEMPTS, Duration.ofMillis(300))
+                      .maxBackoff(Duration.ofSeconds(2))
+                      .doBeforeRetry(
+                          signal ->
+                              log.warn(
+                                  context.getSessionMarker(),
+                                  "notifySqsStage publish retry={} flowRunId={}",
+                                  signal.totalRetries() + 1,
+                                  context.getFlowRunId(),
+                                  signal.failure())))
+              .doOnSuccess(ignored -> onPublished(context, event));
+        });
   }
 
   private OrderTaken buildOrderTakenEvent(PollOrdersFlowContext context) {
@@ -112,10 +119,6 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
     SaveMainOrdersStageResult mainResult = context.getSaveMainOrdersResult();
     if (mainResult != null) {
       headsFromSavedStages += heads(mainResult.getSavedOrders());
-    }
-    SaveHelpersStageResult helpersResult = context.getSaveHelpersResult();
-    if (helpersResult != null) {
-      headsFromSavedStages += heads(helpersResult.getSavedOrders());
     }
 
     int currentHeadsTaken = context.getStateManager().getHeadsTaken();

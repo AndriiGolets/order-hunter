@@ -34,6 +34,14 @@ public class OrderHunterProperties {
   private int betweenPollsJitterMax = 0;
   private boolean disableJitterRandomize = false;
 
+  /**
+   * When false, {@link name.golets.order.hunter.worker.starter.WorkerStarter} does not schedule
+   * ticks until {@link
+   * name.golets.order.hunter.worker.starter.WorkerStarter#ensureTickLoopRunning()} is invoked
+   * (integration tests).
+   */
+  private boolean workerAutoStart = true;
+
   /** HTTP client read/response timeout for poll calls, in milliseconds. */
   private int pollingTimeout = 5000;
 

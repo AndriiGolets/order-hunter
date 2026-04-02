@@ -18,7 +18,11 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-/** Parallel PATCH saves for helpers tied to successfully saved main orders. */
+/**
+ * Parallel PATCH saves for helpers tied to successfully saved main orders.
+ *
+ * <p>{@link #execute} uses {@link Mono#defer} for the same reason as {@link SaveMainOrdersStage}.
+ */
 @Component
 public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(SaveHelpersStage.class);
@@ -46,25 +50,29 @@ public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
    */
   @Override
   public Mono<Void> execute(PollOrdersFlowContext context) {
-    SaveHelpersStageResult result = new SaveHelpersStageResult();
-    context.setSaveHelpersResult(result);
+    return Mono.defer(
+        () -> {
+          SaveHelpersStageResult result = new SaveHelpersStageResult();
+          context.setSaveHelpersResult(result);
 
-    if (context.getStateManager() == null) {
-      return Mono.empty();
-    }
-    List<Order> helperOrdersToSave = resolveHelpersToSave(context);
-    if (helperOrdersToSave.isEmpty()) {
-      log.debug(
-          context.getSessionMarker(),
-          "saveHelpersStage result stored for flowRunId={} savedCount=0",
-          context.getFlowRunId());
-      return Mono.empty();
-    }
+          if (context.getStateManager() == null) {
+            return Mono.empty();
+          }
+          List<Order> helperOrdersToSave = resolveHelpersToSave(context);
+          if (helperOrdersToSave.isEmpty()) {
+            log.debug(
+                context.getSessionMarker(),
+                "saveHelpersStage result stored for flowRunId={} savedCount=0",
+                context.getFlowRunId());
+            return Mono.empty();
+          }
 
-    return Flux.fromIterable(helperOrdersToSave)
-        .flatMap(
-            order -> saveOneHelperOrder(context, result, order), maxParallelOrdersToSaveThreads)
-        .then(Mono.fromRunnable(() -> logResult(context, result)));
+          return Flux.fromIterable(helperOrdersToSave)
+              .flatMap(
+                  order -> saveOneHelperOrder(context, result, order),
+                  maxParallelOrdersToSaveThreads)
+              .then(Mono.fromRunnable(() -> logResult(context, result)));
+        });
   }
 
   private Mono<Void> saveOneHelperOrder(
