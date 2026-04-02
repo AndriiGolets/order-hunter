@@ -7,6 +7,7 @@
       <Class name="name.golets.order.hunter.worker.controller.SqsEventController"/>
       <Class name="name.golets.order.hunter.worker.flow.PollOrdersFlow"/>
       <Class name="name.golets.order.hunter.worker.integration.airportal.ObservedAirportalClient"/>
+      <Class name="name.golets.order.hunter.worker.integration.sqs.AwsOrderTakenSqsPublisher"/>
       <Class name="name.golets.order.hunter.worker.starter.WorkerStarter"/>
     </Or>
   </Match>

@@ -93,25 +93,33 @@ Implement a worker business flow that receives start/stop/status commands from S
 - Saves filtered main orders in parallel.
 - Parallelism limit: `maxParallelOrdersToSaveThreads`.
 - For each main order:
-  - send PATCH to `airportalHost + saveArtistNamePath + artistSid`,
-  - body includes main order sid to assign/save.
+  - call `AirportalClient.patchOrder(orderSid, artistSid)`.
 - WebClient must always include headers: `xApiToken`, `xStackId`.
 - Updates `WorkerStateManager` for successfully saved main orders only.
+- If one PATCH call fails, log server error and continue other parallel order saves.
+- Writes debug log with stage result counts and session marker.
 
 ### 4.5 saveHelpersStage
 
 - Saves helper orders in parallel using the same thread limit strategy.
-- Scope is restricted to helpers associated with filtered and successfully saved main orders.
+- Gets filtered orders and `ParsedOrders.ordersHelperMapByName`.
+- Selects helper groups whose key matches filtered order sid.
+- One filtered order can have several helpers in the matched helper group.
 - WebClient must always include headers: `xApiToken`, `xStackId`.
 - Updates `WorkerStateManager` for successful helper saves.
+- If one PATCH call fails, logs server error and continues other parallel helper saves.
+- Parallel helper save limit is `maxParallelOrdersToSaveThreads`.
 
 ### 4.6 notifySqsStage
 
 - Sends `OrderTaken` event to SQS with:
-  - saved orders,
+  - successfully saved main orders,
   - `completed` computed as `headsTaken >= headsToTake`,
   - `eventVersion` and `producedAt` for contract evolution and traceability.
-- Persists final per-tick progress into `WorkerStateManager`.
+- Retries SQS `OrderTaken` publish on failure.
+- Logs info with number of orders sent.
+- If task is completed, logs completion and sets `WorkerStateManager.started = false`.
+- If task is not completed, keeps worker active and preserves progress in `WorkerStateManager`.
 
 ### 4.7 errorHandlingStage
 

@@ -1,16 +1,139 @@
 package name.golets.order.hunter.worker.stage;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import name.golets.order.hunter.common.flow.Stage;
+import name.golets.order.hunter.common.model.Order;
+import name.golets.order.hunter.worker.event.OrderTaken;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
+import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
+import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
+import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 /** Publishes {@link name.golets.order.hunter.worker.event.OrderTaken} to the outbound queue. */
 @Component
 public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
+  private static final Logger log = LoggerFactory.getLogger(NotifySqsStage.class);
+  private static final String EVENT_VERSION = "1.0";
+  private static final int RETRY_ATTEMPTS = 3;
+  private final OrderTakenSqsPublisher orderTakenSqsPublisher;
 
+  /**
+   * Creates stage dependencies for outbound notification.
+   *
+   * @param orderTakenSqsPublisher SQS publisher for OrderTaken events
+   */
+  public NotifySqsStage(OrderTakenSqsPublisher orderTakenSqsPublisher) {
+    this.orderTakenSqsPublisher = orderTakenSqsPublisher;
+  }
+
+  /**
+   * Publishes OrderTaken event based on successful save results, updates completion flags in state,
+   * and retries SQS publish failures.
+   *
+   * @param context flow session context
+   * @return completion when event is published and state is adjusted
+   */
   @Override
   public Mono<Void> execute(PollOrdersFlowContext context) {
-    return Mono.empty();
+    if (context.getStateManager() == null) {
+      return Mono.empty();
+    }
+    reconcileHeadsConsistency(context);
+    OrderTaken event = buildOrderTakenEvent(context);
+    return orderTakenSqsPublisher
+        .publish(event)
+        .retryWhen(
+            Retry.backoff(RETRY_ATTEMPTS, Duration.ofMillis(300))
+                .maxBackoff(Duration.ofSeconds(2))
+                .doBeforeRetry(
+                    signal ->
+                        log.warn(
+                            context.getSessionMarker(),
+                            "notifySqsStage publish retry={} flowRunId={}",
+                            signal.totalRetries() + 1,
+                            context.getFlowRunId(),
+                            signal.failure())))
+        .doOnSuccess(ignored -> onPublished(context, event));
+  }
+
+  private OrderTaken buildOrderTakenEvent(PollOrdersFlowContext context) {
+    OrderTaken event = new OrderTaken();
+    event.setEventVersion(EVENT_VERSION);
+    event.setProducedAt(Instant.now());
+    event.setSavedOrders(readSavedMainOrders(context));
+    boolean completed =
+        context.getStateManager().getHeadsTaken() >= context.getStateManager().getHeadsToTake();
+    event.setCompleted(completed);
+    return event;
+  }
+
+  private List<Order> readSavedMainOrders(PollOrdersFlowContext context) {
+    SaveMainOrdersStageResult result = context.getSaveMainOrdersResult();
+    if (result == null) {
+      return List.of();
+    }
+    return result.getSavedOrders();
+  }
+
+  private void onPublished(PollOrdersFlowContext context, OrderTaken event) {
+    log.info(
+        context.getSessionMarker(),
+        "notifySqsStage sent OrderTaken for flowRunId={} ordersSent={}",
+        context.getFlowRunId(),
+        event.getSavedOrders().size());
+
+    if (event.isCompleted()) {
+      context.getStateManager().setStarted(false);
+      log.info(
+          context.getSessionMarker(),
+          "notifySqsStage task completed for flowRunId={} headsTaken={} headsToTake={}",
+          context.getFlowRunId(),
+          context.getStateManager().getHeadsTaken(),
+          context.getStateManager().getHeadsToTake());
+      return;
+    }
+    log.info(
+        context.getSessionMarker(),
+        "notifySqsStage task not completed for flowRunId={} headsTaken={} headsToTake={}",
+        context.getFlowRunId(),
+        context.getStateManager().getHeadsTaken(),
+        context.getStateManager().getHeadsToTake());
+  }
+
+  private void reconcileHeadsConsistency(PollOrdersFlowContext context) {
+    int headsFromSavedStages = 0;
+    SaveMainOrdersStageResult mainResult = context.getSaveMainOrdersResult();
+    if (mainResult != null) {
+      headsFromSavedStages += heads(mainResult.getSavedOrders());
+    }
+    SaveHelpersStageResult helpersResult = context.getSaveHelpersResult();
+    if (helpersResult != null) {
+      headsFromSavedStages += heads(helpersResult.getSavedOrders());
+    }
+
+    int currentHeadsTaken = context.getStateManager().getHeadsTaken();
+    if (headsFromSavedStages > currentHeadsTaken) {
+      context.getStateManager().setHeadsTaken(headsFromSavedStages);
+      log.warn(
+          context.getSessionMarker(),
+          "notifySqsStage reconciled headsTaken for flowRunId={} from {} to {}",
+          context.getFlowRunId(),
+          currentHeadsTaken,
+          headsFromSavedStages);
+    }
+  }
+
+  private int heads(List<Order> orders) {
+    if (orders == null) {
+      return 0;
+    }
+    return orders.stream().mapToInt(order -> Math.max(0, order.getHeads())).sum();
   }
 }

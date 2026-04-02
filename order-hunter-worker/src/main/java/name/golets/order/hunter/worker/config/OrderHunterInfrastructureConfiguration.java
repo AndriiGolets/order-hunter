@@ -7,6 +7,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.sqs.SqsAsyncClient;
 
 /**
  * Startup wiring: merged poll URI and shared {@link WebClient} for the airportal host (poll/save).
@@ -68,6 +70,21 @@ public class OrderHunterInfrastructureConfiguration {
   public WebClient airportalSaveWebClient(
       WebClient.Builder webClientBuilder, OrderHunterProperties properties) {
     return createAirportalWebClient(webClientBuilder, properties, properties.getSavingTimeout());
+  }
+
+  /**
+   * Shared async SQS client used by outbound/inbound queue integrations.
+   *
+   * @param properties worker properties with AWS region
+   * @return configured async SQS client
+   */
+  @Bean
+  public SqsAsyncClient sqsAsyncClient(OrderHunterProperties properties) {
+    String regionValue =
+        properties.getAwsRegion() != null && !properties.getAwsRegion().isBlank()
+            ? properties.getAwsRegion()
+            : "eu-central-1";
+    return SqsAsyncClient.builder().region(Region.of(regionValue)).build();
   }
 
   private WebClient createAirportalWebClient(
