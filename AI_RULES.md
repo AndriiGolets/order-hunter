@@ -72,6 +72,8 @@ The primary goals are:
 - Do not mock everything by default.
 - Use realistic tests for WebFlux behavior.
 - Architecture rules should be enforced by ArchUnit tests.
+- Do not relax tests (remove assertions, weaken scenarios, broaden pass conditions) to make failing behavior pass.
+- If passing tests requires relaxation, stop and explain the failure cause and trade-offs; only proceed if explicitly requested.
 
 ### 9. Dependency Hygiene
 - Do not add new dependencies unless required.

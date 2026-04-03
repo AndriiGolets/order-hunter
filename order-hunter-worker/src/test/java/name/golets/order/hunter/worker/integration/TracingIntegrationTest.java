@@ -117,8 +117,8 @@ class TracingIntegrationTest {
   }
 
   /**
-   * Verifies fail-fast stage behavior is still traced: first filtered main save fails, flow root
-   * and WebClient error spans are present, and start/stop command spans are traced.
+   * Verifies tracing under partial-failure behavior: first main save fails with HTTP 500, while
+   * parallel branches continue and downstream stages are still traced.
    */
   @Test
   void scenario7_emitsTracesVisibleInJaeger() {
@@ -140,9 +140,20 @@ class TracingIntegrationTest {
     sqsEventController.onStop(new StopEvent()).block(Duration.ofSeconds(5));
 
     await().atMost(180, SECONDS).until(TracingIntegrationTest::hasFlowCycleSpan);
+    await().atMost(180, SECONDS).until(() -> hasOrderKindTagValue("main"));
+    await().atMost(180, SECONDS).until(TracingIntegrationTest::hasWebClientServerErrorTag);
+    await().atMost(180, SECONDS).until(TracingIntegrationTest::hasSqsCommandSpans);
     assertThat(hasFlowCycleSpan()).as("Jaeger API should show flow root span").isTrue();
     assertThat(hasOrderKindTagValue("main"))
         .as("Jaeger API should show WebClient span with order.kind=main")
+        .isTrue();
+    await().atMost(180, SECONDS).until(() -> hasOrderKindTagValue("helper"));
+    await().atMost(180, SECONDS).until(() -> hasOperationName("order-hunter.flow.statistics"));
+    await()
+        .atMost(180, SECONDS)
+        .until(() -> hasOperationName("order-hunter.sqs.publish.orderTaken"));
+    assertThat(hasOrderKindTagValue("helper"))
+        .as("helper save stage should still execute for successfully saved mains")
         .isTrue();
     assertThat(hasClientUrlTag())
         .as("Jaeger API should show automatic HTTP URL tags on WebClient spans")
@@ -153,9 +164,15 @@ class TracingIntegrationTest {
     assertThat(hasSqsCommandSpans())
         .as("Jaeger API should show traced SQS start/stop command spans")
         .isTrue();
+    assertThat(hasOperationName("order-hunter.flow.statistics"))
+        .as("statistics stage span should be present after partial-failure cycle")
+        .isTrue();
+    assertThat(hasOperationName("order-hunter.sqs.publish.orderTaken"))
+        .as("notify publish span should be present after partial-failure cycle")
+        .isTrue();
     assertThat(LAST_ORDER_TAKEN_EVENT.get())
-        .as("fail-fast flow should not reach outbound OrderTaken publish")
-        .isNull();
+        .as("partial-failure flow should still reach outbound OrderTaken publish")
+        .isNotNull();
   }
 
   private static boolean isDockerComposeAvailable() {
@@ -323,6 +340,16 @@ class TracingIntegrationTest {
     return false;
   }
 
+  private static boolean hasTagIgnoreCase(JsonNode span, String key, String value) {
+    for (JsonNode tag : span.path("tags")) {
+      if (key.equals(tag.path("key").asText(""))
+          && value.equalsIgnoreCase(tag.path("value").asText(""))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static boolean hasTagKeyContaining(JsonNode span, String fragment) {
     for (JsonNode tag : span.path("tags")) {
       String key = tag.path("key").asText("");
@@ -353,7 +380,7 @@ class TracingIntegrationTest {
             continue;
           }
           if (hasTag(span, "status", "500")
-              && hasTag(span, "error", "true")
+              && hasTagIgnoreCase(span, "error", "true")
               && hasTag(span, "error.type", "500")) {
             return true;
           }
@@ -395,6 +422,36 @@ class TracingIntegrationTest {
         }
       }
       return hasStart && hasStop;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasOperationName(String operationNameToFind) {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (operationNameToFind.equals(span.path("operationName").asText(""))) {
+            return true;
+          }
+        }
+      }
+      return false;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return false;

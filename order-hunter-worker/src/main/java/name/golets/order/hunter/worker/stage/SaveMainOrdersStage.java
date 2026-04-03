@@ -86,12 +86,12 @@ public class SaveMainOrdersStage
   private Mono<Void> saveOneMainOrder(
       SaveMainOrdersStageInput input, SaveMainOrdersStageResult result, Order order) {
     if (order == null || order.getSid() == null || order.getArtist() == null) {
-      return Mono.error(
-          new IllegalStateException(
-              "Invalid order in saveMainOrdersStage orderSid="
-                  + (order != null ? order.getSid() : null)
-                  + " artistSid="
-                  + (order != null ? order.getArtist() : null)));
+      log.error(
+          input.getSessionMarker(),
+          "saveMainOrdersStage skipped invalid order orderSid={} artistSid={}",
+          order != null ? order.getSid() : null,
+          order != null ? order.getArtist() : null);
+      return Mono.empty();
     }
 
     int delayMillis = computeBeforeSaveDelayMillis();
@@ -132,6 +132,7 @@ public class SaveMainOrdersStage
                     "saveMainOrdersStage failed orderSid={}",
                     order.getSid(),
                     error))
+        .onErrorResume(error -> Mono.empty())
         .then();
   }
 

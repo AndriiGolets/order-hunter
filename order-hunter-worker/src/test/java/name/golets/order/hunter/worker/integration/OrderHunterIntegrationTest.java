@@ -234,9 +234,9 @@ class OrderHunterIntegrationTest {
     assertThat(DISPATCHER.getPatchCount()).isGreaterThanOrEqualTo(1);
   }
 
-  /** Verifies failed main save aborts cycle and no OrderTaken event is emitted. */
+  /** Verifies failed main save is logged while cycle continues and still emits OrderTaken event. */
   @Test
-  void scenario5_parallelSaves_oneMainFails_cycleAbortsWithoutOrderTakenEvent() {
+  void scenario5_parallelSaves_oneMainFails_cycleContinuesWithPartialSuccess() {
     DISPATCHER.setThreeEmptyThenPayloadThenEmpty(readClasspathUtf8("freeOrders.json"));
     DISPATCHER.setPatchHttpStatus(TWO_HEAD_ORDER_SID, 500);
     DISPATCHER.setPatchHttpStatus(SECOND_MAIN_ONE_HEAD_SID, 200);
@@ -253,9 +253,15 @@ class OrderHunterIntegrationTest {
     assertThat(DISPATCHER.getPollCount())
         .as("at least the 3 empty + 1 payload polls; extra ticks may run before stop")
         .isGreaterThanOrEqualTo(4);
+    await().atMost(30, SECONDS).until(() -> !RECORDED_ORDER_TAKEN_EVENTS.isEmpty());
     assertThat(RECORDED_ORDER_TAKEN_EVENTS)
-        .as("failed save aborts cycle before notify stage")
-        .isEmpty();
+        .as("notify stage should still emit event for successful saves")
+        .isNotEmpty();
+    assertThat(RECORDED_ORDER_TAKEN_EVENTS)
+        .allSatisfy(
+            event ->
+                assertThat(event.getSavedOrders())
+                    .noneMatch(order -> TWO_HEAD_ORDER_SID.equals(order.getSid())));
 
     assertThat(DISPATCHER.getPatchAttemptsForOrderSid(TWO_HEAD_ORDER_SID)).isEqualTo(1);
     assertThat(DISPATCHER.getPatchAttemptsForOrderSid(SECOND_MAIN_ONE_HEAD_SID))
@@ -294,7 +300,7 @@ class OrderHunterIntegrationTest {
    * concurrent PATCH handlers match {@code maxParallelOrdersToSaveThreads: 5}.
    */
   @Test
-  void scenario7_firstMainSave500_cycleFailsFast_withBoundedParallelism() {
+  void scenario7_firstMainSave500_cycleContinues_withBoundedParallelism() {
     FreeOrdersFixtureSelection selection = selectFreeOrdersNormalMains(10);
     final List<String> filteredMainSids = selection.filteredMainSids();
     assertThat(filteredMainSids)
@@ -319,9 +325,15 @@ class OrderHunterIntegrationTest {
 
     assertThat(DISPATCHER.getPatchAttemptsForOrderSid(TWO_HEAD_ORDER_SID)).isEqualTo(1);
     assertThat(DISPATCHER.getPatchMaxConcurrent()).isGreaterThan(0);
+    await().atMost(30, SECONDS).until(() -> !RECORDED_ORDER_TAKEN_EVENTS.isEmpty());
     assertThat(RECORDED_ORDER_TAKEN_EVENTS)
-        .as("failed save aborts cycle before notify stage")
-        .isEmpty();
+        .as("notify stage should still emit events for successful saves")
+        .isNotEmpty();
+    assertThat(RECORDED_ORDER_TAKEN_EVENTS)
+        .allSatisfy(
+            event ->
+                assertThat(event.getSavedOrders())
+                    .noneMatch(order -> TWO_HEAD_ORDER_SID.equals(order.getSid())));
   }
 
   /**

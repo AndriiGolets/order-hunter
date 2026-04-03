@@ -84,12 +84,12 @@ public class SaveHelpersStage
   private Mono<Void> saveOneHelperOrder(
       SaveHelpersStageInput input, SaveHelpersStageResult result, Order order) {
     if (order == null || order.getSid() == null || order.getArtist() == null) {
-      return Mono.error(
-          new IllegalStateException(
-              "Invalid helper in saveHelpersStage helperSid="
-                  + (order != null ? order.getSid() : null)
-                  + " artistSid="
-                  + (order != null ? order.getArtist() : null)));
+      log.error(
+          input.getSessionMarker(),
+          "saveHelpersStage skipped invalid helper helperSid={} artistSid={}",
+          order != null ? order.getSid() : null,
+          order != null ? order.getArtist() : null);
+      return Mono.empty();
     }
 
     return airportalClient
@@ -118,6 +118,7 @@ public class SaveHelpersStage
                     "saveHelpersStage failed helperSid={}",
                     order.getSid(),
                     error))
+        .onErrorResume(error -> Mono.empty())
         .then();
   }
 
