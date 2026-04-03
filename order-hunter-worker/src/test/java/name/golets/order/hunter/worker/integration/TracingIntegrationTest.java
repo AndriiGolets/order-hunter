@@ -170,6 +170,9 @@ class TracingIntegrationTest {
         .as("Jaeger API should show traced SQS start/stop command spans")
         .isTrue();
     assertThat(hasSqsPublishSpan()).as("Jaeger API should show traced SQS publish span").isTrue();
+    assertThat(hasSqsPublishSpanWithSimplifiedOrderTakenTag())
+        .as("Jaeger API should include simplified orderTaken payload on SQS publish span")
+        .isTrue();
     assertThat(LAST_ORDER_TAKEN_EVENT.get())
         .as("integration test should capture published OrderTaken payload")
         .isNotNull();
@@ -493,6 +496,42 @@ class TracingIntegrationTest {
       for (JsonNode trace : root.path("data")) {
         for (JsonNode span : trace.path("spans")) {
           if (SQS_PUBLISH_SPAN_NAME.equals(span.path("operationName").asText(""))) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasSqsPublishSpanWithSimplifiedOrderTakenTag() {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (!SQS_PUBLISH_SPAN_NAME.equals(span.path("operationName").asText(""))) {
+            continue;
+          }
+          if (hasTagValueContaining(span, "orderTaken", "\"savedOrders\":[")
+              && hasTagValueContaining(span, "orderTaken", "\"sid\"")
+              && hasTagValueContaining(span, "orderTaken", "\"heads\"")
+              && !hasTagValueContaining(span, "orderTaken", "\"artist\"")) {
             return true;
           }
         }

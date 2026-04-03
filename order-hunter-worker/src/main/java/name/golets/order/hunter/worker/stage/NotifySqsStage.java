@@ -1,7 +1,5 @@
 package name.golets.order.hunter.worker.stage;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
@@ -14,6 +12,7 @@ import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
+import name.golets.order.hunter.worker.util.JsonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -31,7 +30,6 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(NotifySqsStage.class);
   private static final String EVENT_VERSION = "1.0";
   private static final int RETRY_ATTEMPTS = 3;
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
   private final OrderTakenSqsPublisher orderTakenSqsPublisher;
   private final ObservationRegistry observationRegistry;
 
@@ -75,7 +73,8 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
               Observation.createNotStarted(
                       "order-hunter.sqs.publish.orderTaken", observationRegistry)
                   .lowCardinalityKeyValue("operation", "publishOrderTaken")
-                  .highCardinalityKeyValue("orderTaken", toJson(event));
+                  .highCardinalityKeyValue(
+                      "orderTaken", JsonUtil.toOrderTakenObservationJson(event));
           if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
             Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
             if (parent instanceof Observation parentObservation) {
@@ -100,14 +99,6 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
               .doOnError(observation::error)
               .doFinally(signalType -> observation.stop());
         });
-  }
-
-  private static String toJson(OrderTaken event) {
-    try {
-      return OBJECT_MAPPER.writeValueAsString(event);
-    } catch (JsonProcessingException e) {
-      return "{}";
-    }
   }
 
   private OrderTaken buildOrderTakenEvent(PollOrdersFlowContext context) {

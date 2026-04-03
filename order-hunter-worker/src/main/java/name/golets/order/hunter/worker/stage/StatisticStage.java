@@ -1,10 +1,7 @@
 package name.golets.order.hunter.worker.stage;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -18,6 +15,7 @@ import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
+import name.golets.order.hunter.worker.util.JsonUtil;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -28,7 +26,6 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class StatisticStage implements Stage<PollOrdersFlowContext> {
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final String SPAN_NAME = "order-hunter.flow.statistics";
 
   private final ObservationRegistry observationRegistry;
@@ -82,30 +79,23 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
 
   private void appendOrderTags(
       Observation observation, ParsedOrders parsedOrders, PollOrdersFlowContext context) {
-    List<SimplifiedOrder> mainPolled =
-        parsedOrders.getOrdersMapBySid().values().stream()
-            .filter(Objects::nonNull)
-            .map(this::toSimplifiedOrder)
-            .sorted(SimplifiedOrder.COMPARATOR)
-            .toList();
-    List<SimplifiedOrder> helpersPolled =
+    List<Order> mainPolled =
+        parsedOrders.getOrdersMapBySid().values().stream().filter(Objects::nonNull).toList();
+    List<Order> helpersPolled =
         parsedOrders.getOrdersHelperMapByName().values().stream()
             .filter(Objects::nonNull)
             .map(Map::values)
             .flatMap(values -> values.stream())
             .filter(Objects::nonNull)
-            .map(this::toSimplifiedOrder)
-            .sorted(SimplifiedOrder.COMPARATOR)
             .toList();
-    List<SimplifiedOrder> mainFiltered =
-        filteredMainOrders(context).stream()
-            .map(this::toSimplifiedOrder)
-            .sorted(SimplifiedOrder.COMPARATOR)
-            .toList();
+    List<Order> mainFiltered = filteredMainOrders(context);
 
-    observation.highCardinalityKeyValue("orders.main.polled", toJson(mainPolled));
-    observation.highCardinalityKeyValue("orders.helpers.polled", toJson(helpersPolled));
-    observation.highCardinalityKeyValue("orders.main.filtered", toJson(mainFiltered));
+    observation.highCardinalityKeyValue(
+        "orders.main.polled", JsonUtil.toSimplifiedOrdersJson(mainPolled));
+    observation.highCardinalityKeyValue(
+        "orders.helpers.polled", JsonUtil.toSimplifiedOrdersJson(helpersPolled));
+    observation.highCardinalityKeyValue(
+        "orders.main.filtered", JsonUtil.toSimplifiedOrdersJson(mainFiltered));
   }
 
   private void appendStateTags(Observation observation, PollOrdersFlowContext context) {
@@ -157,31 +147,7 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
     return java.util.stream.Stream.concat(main.stream(), helpers.stream()).toList();
   }
 
-  private SimplifiedOrder toSimplifiedOrder(Order order) {
-    return new SimplifiedOrder(
-        defaultText(order.getSid()),
-        defaultText(order.getName()),
-        defaultText(order.getProductTitle()),
-        Math.max(0, order.getHeads()));
-  }
-
   private static String defaultText(String value) {
     return value != null ? value : "";
-  }
-
-  private static String toJson(Object value) {
-    try {
-      return OBJECT_MAPPER.writeValueAsString(value);
-    } catch (JsonProcessingException e) {
-      return "[]";
-    }
-  }
-
-  private record SimplifiedOrder(String sid, String name, String productTitle, int heads) {
-    private static final Comparator<SimplifiedOrder> COMPARATOR =
-        Comparator.comparing(SimplifiedOrder::sid)
-            .thenComparing(SimplifiedOrder::name)
-            .thenComparing(SimplifiedOrder::productTitle)
-            .thenComparingInt(SimplifiedOrder::heads);
   }
 }
