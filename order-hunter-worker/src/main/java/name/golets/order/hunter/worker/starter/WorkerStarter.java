@@ -1,7 +1,6 @@
 package name.golets.order.hunter.worker.starter;
 
 import java.time.Duration;
-import java.util.concurrent.ThreadLocalRandom;
 import name.golets.order.hunter.common.flow.Flow;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import name.golets.order.hunter.worker.state.WorkerStateManager;
@@ -15,8 +14,7 @@ import reactor.core.scheduler.Schedulers;
 
 /**
  * Periodically evaluates {@link WorkerStateManager} and runs {@link Flow#start()} once per tick,
- * with a delay between ticks derived from {@link OrderHunterProperties#getBetweenPollsJitterMax()}
- * and {@link OrderHunterProperties#isDisableJitterRandomize()}. Tick errors do not stop the loop.
+ * while applying an idle delay when the worker is stopped. Tick errors do not stop the loop.
  */
 @Component
 public class WorkerStarter implements SmartLifecycle {
@@ -34,7 +32,7 @@ public class WorkerStarter implements SmartLifecycle {
    *
    * @param workerStateManager shared worker flags and head budget
    * @param pollOrdersFlow poll–save–notify flow executed on each tick
-   * @param properties timing and jitter configuration for inter-tick delay
+   * @param properties starter/flow timing configuration
    */
   public WorkerStarter(
       WorkerStateManager workerStateManager,
@@ -78,7 +76,6 @@ public class WorkerStarter implements SmartLifecycle {
     }
     tickDisposable =
         Mono.defer(this::safeTick)
-            .then(Mono.delay(Duration.ofMillis(computeDelayMillis())))
             .repeat()
             .subscribeOn(Schedulers.boundedElastic())
             .subscribe(
@@ -86,20 +83,15 @@ public class WorkerStarter implements SmartLifecycle {
   }
 
   private Mono<Void> safeTick() {
+    if (!workerStateManager.isStarted()) {
+      return Mono.delay(Duration.ofMillis(Math.max(0, properties.getIdleDelay()))).then();
+    }
     return tickOnce()
         .onErrorResume(
             error -> {
               log.warn("WorkerStarter tick failed; continuing loop", error);
               return Mono.empty();
             });
-  }
-
-  private long computeDelayMillis() {
-    int max = Math.max(0, properties.getBetweenPollsJitterMax());
-    if (properties.isDisableJitterRandomize()) {
-      return max;
-    }
-    return ThreadLocalRandom.current().nextInt(0, max + 1);
   }
 
   @Override

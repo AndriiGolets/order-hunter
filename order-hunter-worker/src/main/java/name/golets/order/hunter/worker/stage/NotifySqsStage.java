@@ -31,7 +31,7 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(NotifySqsStage.class);
   private static final String EVENT_VERSION = "1.0";
   private static final int RETRY_ATTEMPTS = 3;
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
   private final OrderTakenSqsPublisher orderTakenSqsPublisher;
   private final ObservationRegistry observationRegistry;
 

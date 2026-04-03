@@ -86,8 +86,8 @@ public class PollOrdersFlow implements Flow {
         .then(filterOrdersStage.execute(context))
         .then(saveMainOrdersStage.execute(context))
         .then(saveHelpersStage.execute(context))
-        .then(notifySqsStage.execute(context))
         .then(statisticStage.execute(context))
+        .then(notifySqsStage.execute(context))
         .onErrorResume(
             error -> {
               context.captureFlowError(error);

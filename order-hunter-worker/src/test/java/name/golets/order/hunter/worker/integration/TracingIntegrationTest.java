@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import name.golets.order.hunter.common.enums.OrderType;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.common.model.OrdersResponse;
@@ -24,6 +25,7 @@ import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.common.utils.OrderParsingUtil;
 import name.golets.order.hunter.worker.OrderHunterWorkerApplication;
 import name.golets.order.hunter.worker.controller.SqsEventController;
+import name.golets.order.hunter.worker.event.OrderTaken;
 import name.golets.order.hunter.worker.event.StartEvent;
 import name.golets.order.hunter.worker.event.StopEvent;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
@@ -70,6 +72,7 @@ class TracingIntegrationTest {
   private static final Duration JAEGER_STARTUP_TIMEOUT = Duration.ofSeconds(30);
   private static final String TWO_HEAD_ORDER_SID = "ov2_recLQ1ExOBR4FuUjm";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final AtomicReference<OrderTaken> LAST_ORDER_TAKEN_EVENT = new AtomicReference<>();
   private static final AirportalMockDispatcher DISPATCHER = new AirportalMockDispatcher();
   private static final MockWebServer MOCK_WEB_SERVER;
   private static final HttpClient HTTP_CLIENT =
@@ -112,6 +115,7 @@ class TracingIntegrationTest {
   @BeforeEach
   void resetDispatcher() {
     DISPATCHER.reset();
+    LAST_ORDER_TAKEN_EVENT.set(null);
   }
 
   /**
@@ -141,16 +145,8 @@ class TracingIntegrationTest {
 
     sqsEventController.onStop(new StopEvent()).block(Duration.ofSeconds(5));
 
-    await()
-        .atMost(45, SECONDS)
-        .until(
-            () ->
-                hasFlowCycleSpan()
-                    && hasOrderKindTagValue("main")
-                    && hasOrderKindTagValue("helper")
-                    && hasClientUrlTag()
-                    && hasStatisticsStageSpan()
-                    && hasWebClientServerErrorTag());
+    await().atMost(180, SECONDS).until(TracingIntegrationTest::hasFlowCycleSpan);
+    await().atMost(90, SECONDS).until(TracingIntegrationTest::hasPopulatedStatisticsStateTags);
     assertThat(hasFlowCycleSpan()).as("Jaeger API should show flow root span").isTrue();
     assertThat(hasOrderKindTagValue("main"))
         .as("Jaeger API should show WebClient span with order.kind=main")
@@ -164,6 +160,9 @@ class TracingIntegrationTest {
     assertThat(hasStatisticsStageSpan())
         .as("Jaeger API should show statistics span with polled and filtered order tags")
         .isTrue();
+    assertThat(hasPopulatedStatisticsStateTags())
+        .as("Jaeger API should show non-empty statistics state tags")
+        .isTrue();
     assertThat(hasWebClientServerErrorTag())
         .as("Jaeger API should mark failed WebClient span with error=true and error.type")
         .isTrue();
@@ -171,6 +170,12 @@ class TracingIntegrationTest {
         .as("Jaeger API should show traced SQS start/stop command spans")
         .isTrue();
     assertThat(hasSqsPublishSpan()).as("Jaeger API should show traced SQS publish span").isTrue();
+    assertThat(LAST_ORDER_TAKEN_EVENT.get())
+        .as("integration test should capture published OrderTaken payload")
+        .isNotNull();
+    assertThat(LAST_ORDER_TAKEN_EVENT.get().getSavedOrders())
+        .as("published OrderTaken payload should include saved orders")
+        .isNotEmpty();
   }
 
   private static boolean isDockerComposeAvailable() {
@@ -501,6 +506,51 @@ class TracingIntegrationTest {
     }
   }
 
+  private static boolean hasPopulatedStatisticsStateTags() {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (!STATISTICS_SPAN_NAME.equals(span.path("operationName").asText(""))) {
+            continue;
+          }
+          if (hasTagValueNotEqual(span, "state.headsToTake", "0")
+              && hasTagKeyContaining(span, "state.headsTaken")
+              && hasTagKeyContaining(span, "state.savedOrderSidsCount")) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasTagValueNotEqual(JsonNode span, String key, String excludedValue) {
+    for (JsonNode tag : span.path("tags")) {
+      if (!key.equals(tag.path("key").asText(""))) {
+        continue;
+      }
+      return !excludedValue.equals(tag.path("value").asText(""));
+    }
+    return false;
+  }
+
   private static FreeOrdersFixtureSelection selectFreeOrdersNormalMains(int headsToTake) {
     try {
       try (InputStream in =
@@ -566,7 +616,10 @@ class TracingIntegrationTest {
     @Bean
     @Primary
     OrderTakenSqsPublisher recordingOrderTakenSqsPublisher() {
-      return event -> Mono.empty();
+      return event -> {
+        LAST_ORDER_TAKEN_EVENT.set(event);
+        return Mono.empty();
+      };
     }
   }
 }

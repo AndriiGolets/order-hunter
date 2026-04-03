@@ -18,7 +18,7 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class SqsEventController {
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
 
   private final WorkerStateManager workerStateManager;
   private final ObservationRegistry observationRegistry;

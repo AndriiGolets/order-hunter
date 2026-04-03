@@ -1,5 +1,6 @@
 package name.golets.order.hunter.worker.flow;
 
+import java.util.List;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.Setter;
@@ -23,6 +24,11 @@ public final class PollOrdersFlowContext {
   private final WorkerStateManager stateManager;
   private final String flowRunId;
   private final Marker sessionMarker;
+  private final boolean startedAtFlowStart;
+  private final int headsToTakeAtFlowStart;
+  private final List<name.golets.order.hunter.common.enums.OrderType> orderTypesAtFlowStart;
+  private final String sessionIdAtFlowStart;
+  private final String hunterIdAtFlowStart;
   private PollRecordsStageResult pollRecordsResult;
   private ParseOrdersStageResult parseOrdersResult;
   private FilterRecordsStageResult filterRecordsResult;
@@ -31,10 +37,22 @@ public final class PollOrdersFlowContext {
   private Throwable flowError;
 
   private PollOrdersFlowContext(
-      WorkerStateManager stateManager, String flowRunId, Marker sessionMarker) {
+      WorkerStateManager stateManager,
+      String flowRunId,
+      Marker sessionMarker,
+      boolean startedAtFlowStart,
+      int headsToTakeAtFlowStart,
+      List<name.golets.order.hunter.common.enums.OrderType> orderTypesAtFlowStart,
+      String sessionIdAtFlowStart,
+      String hunterIdAtFlowStart) {
     this.stateManager = stateManager;
     this.flowRunId = flowRunId;
     this.sessionMarker = sessionMarker;
+    this.startedAtFlowStart = startedAtFlowStart;
+    this.headsToTakeAtFlowStart = headsToTakeAtFlowStart;
+    this.orderTypesAtFlowStart = orderTypesAtFlowStart;
+    this.sessionIdAtFlowStart = sessionIdAtFlowStart;
+    this.hunterIdAtFlowStart = hunterIdAtFlowStart;
   }
 
   /**
@@ -52,8 +70,26 @@ public final class PollOrdersFlowContext {
                 && !stateManager.getSessionId().isBlank()
             ? stateManager.getSessionId()
             : flowRunId;
+    boolean startedAtFlowStart = stateManager != null && stateManager.isStarted();
+    int headsToTakeAtFlowStart = stateManager != null ? stateManager.getHeadsToTake() : 0;
+    List<name.golets.order.hunter.common.enums.OrderType> orderTypesAtFlowStart =
+        stateManager != null ? stateManager.getOrderTypes() : List.of();
+    String hunterIdAtFlowStart =
+        stateManager != null ? defaultText(stateManager.getHunterId()) : "";
     Marker marker = MarkerFactory.getMarker("sessionId=" + sessionId);
-    return new PollOrdersFlowContext(stateManager, flowRunId, marker);
+    return new PollOrdersFlowContext(
+        stateManager,
+        flowRunId,
+        marker,
+        startedAtFlowStart,
+        headsToTakeAtFlowStart,
+        List.copyOf(orderTypesAtFlowStart),
+        defaultText(sessionId),
+        hunterIdAtFlowStart);
+  }
+
+  private static String defaultText(String value) {
+    return value != null ? value : "";
   }
 
   /**

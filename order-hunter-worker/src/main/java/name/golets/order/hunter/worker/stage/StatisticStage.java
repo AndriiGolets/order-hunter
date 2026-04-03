@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,7 +16,8 @@ import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
-import name.golets.order.hunter.worker.state.WorkerStateManager;
+import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
+import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -107,24 +109,21 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
   }
 
   private void appendStateTags(Observation observation, PollOrdersFlowContext context) {
-    WorkerStateManager stateManager = context.getStateManager();
-    if (stateManager == null) {
-      return;
-    }
-    observation.lowCardinalityKeyValue("state.started", Boolean.toString(stateManager.isStarted()));
     observation.lowCardinalityKeyValue(
-        "state.headsToTake", Integer.toString(stateManager.getHeadsToTake()));
+        "state.started", Boolean.toString(context.isStartedAtFlowStart()));
     observation.lowCardinalityKeyValue(
-        "state.headsTaken", Integer.toString(stateManager.getHeadsTaken()));
+        "state.headsToTake", Integer.toString(Math.max(0, context.getHeadsToTakeAtFlowStart())));
+    observation.lowCardinalityKeyValue("state.headsTaken", Integer.toString(savedHeads(context)));
     observation.lowCardinalityKeyValue(
-        "state.savedOrderSidsCount", Integer.toString(stateManager.getSavedOrderSids().size()));
+        "state.savedOrderSidsCount", Integer.toString(savedOrderSidsCount(context)));
     observation.highCardinalityKeyValue(
-        "state.orderTypes", stateManager.getOrderTypes().toString());
+        "state.orderTypes", context.getOrderTypesAtFlowStart().toString());
     observation.highCardinalityKeyValue(
-        "state.takenOrderSids", new TreeSet<>(stateManager.getSavedOrderSids()).toString());
+        "state.takenOrderSids", new TreeSet<>(savedSids(context)).toString());
     observation.highCardinalityKeyValue(
-        "state.sessionId", defaultText(stateManager.getSessionId()));
-    observation.highCardinalityKeyValue("state.hunterId", defaultText(stateManager.getHunterId()));
+        "state.sessionId", defaultText(context.getSessionIdAtFlowStart()));
+    observation.highCardinalityKeyValue(
+        "state.hunterId", defaultText(context.getHunterIdAtFlowStart()));
     observation.highCardinalityKeyValue("state.flowRunId", defaultText(context.getFlowRunId()));
   }
 
@@ -134,6 +133,28 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
       return List.of();
     }
     return filterRecordsResult.getFilteredOrders();
+  }
+
+  private static int savedHeads(PollOrdersFlowContext context) {
+    return savedOrders(context).stream().mapToInt(order -> Math.max(0, order.getHeads())).sum();
+  }
+
+  private static int savedOrderSidsCount(PollOrdersFlowContext context) {
+    return savedSids(context).size();
+  }
+
+  private static HashSet<String> savedSids(PollOrdersFlowContext context) {
+    HashSet<String> sids = new HashSet<>();
+    savedOrders(context).stream().map(Order::getSid).filter(Objects::nonNull).forEach(sids::add);
+    return sids;
+  }
+
+  private static List<Order> savedOrders(PollOrdersFlowContext context) {
+    SaveMainOrdersStageResult mainResult = context.getSaveMainOrdersResult();
+    SaveHelpersStageResult helperResult = context.getSaveHelpersResult();
+    List<Order> main = mainResult != null ? mainResult.getSavedOrders() : List.of();
+    List<Order> helpers = helperResult != null ? helperResult.getSavedOrders() : List.of();
+    return java.util.stream.Stream.concat(main.stream(), helpers.stream()).toList();
   }
 
   private SimplifiedOrder toSimplifiedOrder(Order order) {

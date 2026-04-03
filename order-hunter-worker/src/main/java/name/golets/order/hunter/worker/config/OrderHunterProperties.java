@@ -34,6 +34,9 @@ public class OrderHunterProperties {
   private int betweenPollsJitterMax = 0;
   private boolean disableJitterRandomize = false;
 
+  /** Delay between starter ticks while worker is stopped, in milliseconds. */
+  private int idleDelay = 1000;
+
   /**
    * When false, {@link name.golets.order.hunter.worker.starter.WorkerStarter} does not schedule
    * ticks until {@link

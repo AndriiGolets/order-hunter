@@ -46,8 +46,6 @@ class StatisticStageTest {
 
     when(stateManager.isStarted()).thenReturn(true);
     when(stateManager.getHeadsToTake()).thenReturn(10);
-    when(stateManager.getHeadsTaken()).thenReturn(4);
-    when(stateManager.getSavedOrderSids()).thenReturn(java.util.Set.of("sid-1", "sid-2"));
     when(stateManager.getOrderTypes()).thenReturn(List.of());
     when(stateManager.getSessionId()).thenReturn("session-1");
     when(stateManager.getHunterId()).thenReturn("hunter-a");
