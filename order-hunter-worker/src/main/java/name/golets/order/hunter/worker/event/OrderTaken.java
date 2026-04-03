@@ -9,7 +9,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
-import name.golets.order.hunter.common.model.Order;
+import name.golets.order.hunter.worker.util.SimplifiedOrder;
 
 /**
  * Outbound SQS event reporting successfully saved orders and completion relative to the head
@@ -30,13 +30,13 @@ public class OrderTaken {
   @Setter(AccessLevel.NONE)
   @EqualsAndHashCode.Exclude
   @ToString.Exclude
-  private List<Order> savedOrders = new ArrayList<>();
+  private List<SimplifiedOrder> savedOrders = new ArrayList<>();
 
-  public List<Order> getSavedOrders() {
+  public List<SimplifiedOrder> getSavedOrders() {
     return List.copyOf(savedOrders);
   }
 
-  public void setSavedOrders(List<Order> savedOrders) {
+  public void setSavedOrders(List<SimplifiedOrder> savedOrders) {
     this.savedOrders = savedOrders != null ? new ArrayList<>(savedOrders) : new ArrayList<>();
   }
 }

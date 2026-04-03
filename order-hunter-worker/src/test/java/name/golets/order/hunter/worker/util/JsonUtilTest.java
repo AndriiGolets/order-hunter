@@ -37,18 +37,8 @@ class JsonUtilTest {
     event.setCompleted(true);
     event.setSavedOrders(
         List.of(
-            new Order()
-                .setSid("sid-2")
-                .setName("Name B")
-                .setProductTitle("Product B")
-                .setArtist("artist-b")
-                .setHeads(5),
-            new Order()
-                .setSid("sid-1")
-                .setName("Name A")
-                .setProductTitle("Product A")
-                .setArtist("artist-a")
-                .setHeads(-2)));
+            new SimplifiedOrder("sid-2", "Name B", "Product B", 5),
+            new SimplifiedOrder("sid-1", "Name A", "Product A", 0)));
 
     String json = JsonUtil.toOrderTakenObservationJson(event);
     JsonNode root = OBJECT_MAPPER.readTree(json);

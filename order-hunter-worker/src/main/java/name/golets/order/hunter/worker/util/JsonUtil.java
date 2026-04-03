@@ -2,6 +2,7 @@ package name.golets.order.hunter.worker.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Comparator;
 import java.util.List;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.event.OrderTaken;
@@ -9,6 +10,11 @@ import name.golets.order.hunter.worker.event.OrderTaken;
 /** Shared JSON conversion helpers for worker observability payloads. */
 public final class JsonUtil {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper().findAndRegisterModules();
+  private static final Comparator<SimplifiedOrder> SIMPLIFIED_ORDER_COMPARATOR =
+      Comparator.comparing(SimplifiedOrder::getSid)
+          .thenComparing(SimplifiedOrder::getName)
+          .thenComparing(SimplifiedOrder::getProductTitle)
+          .thenComparingInt(SimplifiedOrder::getHeads);
 
   private JsonUtil() {}
 
@@ -30,7 +36,7 @@ public final class JsonUtil {
             defaultText(event.getEventVersion()),
             event.getProducedAt() != null ? event.getProducedAt().toString() : "",
             event.isCompleted(),
-            SimplifiedOrdersMapper.map(event.getSavedOrders()));
+            sortSimplifiedOrders(event.getSavedOrders()));
     return toOneLineJson(payload);
   }
 
@@ -46,6 +52,13 @@ public final class JsonUtil {
 
   private static String defaultText(String value) {
     return value != null ? value : "";
+  }
+
+  private static List<SimplifiedOrder> sortSimplifiedOrders(List<SimplifiedOrder> orders) {
+    if (orders == null) {
+      return List.of();
+    }
+    return orders.stream().sorted(SIMPLIFIED_ORDER_COMPARATOR).toList();
   }
 
   private record OrderTakenObservation(

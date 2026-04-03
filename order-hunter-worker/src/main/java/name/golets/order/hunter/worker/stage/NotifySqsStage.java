@@ -13,6 +13,7 @@ import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
 import name.golets.order.hunter.worker.stage.inputs.NotifySqsStageInput;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import name.golets.order.hunter.worker.util.JsonUtil;
+import name.golets.order.hunter.worker.util.SimplifiedOrdersMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Marker;
@@ -123,7 +124,7 @@ public class NotifySqsStage
     OrderTaken event = new OrderTaken();
     event.setEventVersion(EVENT_VERSION);
     event.setProducedAt(Instant.now());
-    event.setSavedOrders(input.getSavedMainOrders());
+    event.setSavedOrders(SimplifiedOrdersMapper.map(input.getSavedMainOrders()));
     boolean completed =
         input.getStateManager().getHeadsTaken() >= input.getStateManager().getHeadsToTake();
     event.setCompleted(completed);

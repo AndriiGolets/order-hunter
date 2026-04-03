@@ -12,7 +12,6 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.observation.tck.TestObservationRegistry;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.event.OrderTaken;
@@ -21,6 +20,7 @@ import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
 import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import name.golets.order.hunter.worker.state.DefaultWorkerStateManager;
+import name.golets.order.hunter.worker.util.SimplifiedOrder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -63,7 +63,10 @@ class NotifySqsStageTest {
     assertNotNull(sent.getProducedAt());
     assertEquals("1.0", sent.getEventVersion());
     assertTrue(sent.isCompleted());
-    assertEquals(List.of(savedMain), sent.getSavedOrders());
+    assertEquals(1, sent.getSavedOrders().size());
+    SimplifiedOrder simplifiedOrder = sent.getSavedOrders().getFirst();
+    assertEquals("main-1", simplifiedOrder.getSid());
+    assertEquals(2, simplifiedOrder.getHeads());
     assertFalse(state.isStarted());
     observationRegistry.assertThat().hasAnObservationWithAKeyName("orderTaken");
   }
