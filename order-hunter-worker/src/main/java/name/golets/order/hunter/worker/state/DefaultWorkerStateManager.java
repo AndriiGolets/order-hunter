@@ -1,141 +1,160 @@
 package name.golets.order.hunter.worker.state;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 import name.golets.order.hunter.common.enums.OrderType;
 import name.golets.order.hunter.common.model.Order;
 import org.springframework.stereotype.Component;
 
-/** In-memory implementation of {@link WorkerStateManager} (skeleton). */
+/**
+ * In-memory implementation of {@link WorkerStateManager} backed by an atomic active task session.
+ *
+ * <p>This class keeps the current interface contract while routing state reads and writes through
+ * {@link TaskSession}.
+ */
 @Component
 public class DefaultWorkerStateManager implements WorkerStateManager {
 
-  private final Object lock = new Object();
-  private boolean started;
-  private int headsToTake;
-  private int headsTaken;
-  private List<OrderType> orderTypes = new ArrayList<>();
-  private final Set<String> takenOrderSids = new HashSet<>();
-  private String sessionId = "";
-  private String hunterId = "";
+  private static final String EMPTY_VALUE = "";
+
+  private final AtomicReference<TaskSession> activeSession = new AtomicReference<>();
+  private final AtomicReference<String> configuredHunterId = new AtomicReference<>(EMPTY_VALUE);
 
   @Override
   public boolean isStarted() {
-    synchronized (lock) {
-      return started;
-    }
+    return activeSession.get() != null;
   }
 
   @Override
   public void setStarted(boolean started) {
-    synchronized (lock) {
-      this.started = started;
+    if (!started) {
+      activeSession.set(null);
+      return;
     }
+    ensureActiveSession();
   }
 
   @Override
   public int getHeadsToTake() {
-    synchronized (lock) {
-      return headsToTake;
-    }
+    TaskSession session = activeSession.get();
+    return session != null ? session.getHeadsToTake() : 0;
   }
 
   @Override
   public void setHeadsToTake(int headsToTake) {
-    synchronized (lock) {
-      this.headsToTake = headsToTake;
-    }
+    updateSession(session -> session.withHeadsToTake(headsToTake));
   }
 
   @Override
   public int getHeadsTaken() {
-    synchronized (lock) {
-      return headsTaken;
-    }
+    TaskSession session = activeSession.get();
+    return session != null ? session.getHeadsTaken() : 0;
   }
 
   @Override
   public void setHeadsTaken(int headsTaken) {
-    synchronized (lock) {
-      this.headsTaken = headsTaken;
+    TaskSession session = activeSession.get();
+    if (session == null) {
+      session = ensureActiveSession();
     }
+    session.setHeadsTaken(headsTaken);
   }
 
   @Override
   public List<OrderType> getOrderTypes() {
-    synchronized (lock) {
-      return List.copyOf(orderTypes);
-    }
+    TaskSession session = activeSession.get();
+    return session != null ? session.getOrderTypes() : List.of();
   }
 
   @Override
   public void setOrderTypes(List<OrderType> orderTypes) {
-    synchronized (lock) {
-      this.orderTypes = orderTypes != null ? new ArrayList<>(orderTypes) : new ArrayList<>();
-    }
+    updateSession(session -> session.withOrderTypes(orderTypes));
   }
 
   @Override
   public Set<String> getSavedOrderSids() {
-    synchronized (lock) {
-      return Collections.unmodifiableSet(new HashSet<>(takenOrderSids));
-    }
+    TaskSession session = activeSession.get();
+    return session != null ? session.getSavedOrderSids() : Set.of();
   }
 
   @Override
   public void registerSuccessfulSave(Order order) {
-    synchronized (lock) {
-      if (order != null && order.getSid() != null) {
-        takenOrderSids.add(order.getSid());
-      }
-      if (order != null) {
-        headsTaken += order.getHeads();
-      }
+    TaskSession session = activeSession.get();
+    if (session != null) {
+      session.registerSuccessfulSave(order);
     }
   }
 
   @Override
   public String getSessionId() {
-    synchronized (lock) {
-      return sessionId;
-    }
+    TaskSession session = activeSession.get();
+    return session != null ? session.getSessionId() : EMPTY_VALUE;
   }
 
   @Override
   public void setSessionId(String sessionId) {
-    synchronized (lock) {
-      this.sessionId = sessionId != null ? sessionId : "";
-    }
+    updateSession(session -> session.withSessionId(sessionId));
   }
 
   @Override
   public String getHunterId() {
-    synchronized (lock) {
-      return hunterId;
-    }
+    TaskSession session = activeSession.get();
+    return session != null ? session.getHunterId() : configuredHunterId.get();
   }
 
   @Override
   public void setHunterId(String hunterId) {
-    synchronized (lock) {
-      this.hunterId = hunterId != null ? hunterId : "";
-    }
+    String safeValue = hunterId != null ? hunterId : EMPTY_VALUE;
+    configuredHunterId.set(safeValue);
+    updateSession(session -> session.withHunterId(safeValue));
   }
 
   @Override
   public WorkerStatusSnapshot toSnapshot() {
-    synchronized (lock) {
-      WorkerStatusSnapshot s = new WorkerStatusSnapshot();
-      s.setStarted(started);
-      s.setHeadsToTake(headsToTake);
-      s.setHeadsTaken(headsTaken);
-      s.setOrderTypes(List.copyOf(orderTypes));
-      s.setSessionId(sessionId);
-      s.setHunterId(hunterId);
-      return s;
+    WorkerStatusSnapshot snapshot = new WorkerStatusSnapshot();
+    TaskSession session = activeSession.get();
+    snapshot.setStarted(session != null);
+    snapshot.setHunterId(configuredHunterId.get());
+    if (session == null) {
+      snapshot.setHeadsToTake(0);
+      snapshot.setHeadsTaken(0);
+      snapshot.setOrderTypes(List.of());
+      snapshot.setSessionId(EMPTY_VALUE);
+      return snapshot;
+    }
+    snapshot.setHeadsToTake(session.getHeadsToTake());
+    snapshot.setHeadsTaken(session.getHeadsTaken());
+    snapshot.setOrderTypes(session.getOrderTypes());
+    snapshot.setSessionId(session.getSessionId());
+    snapshot.setHunterId(session.getHunterId());
+    snapshot.setLastFlowStartedAt(session.getStartedAt());
+    return snapshot;
+  }
+
+  private TaskSession ensureActiveSession() {
+    TaskSession existing = activeSession.get();
+    if (existing != null) {
+      return existing;
+    }
+    TaskSession created =
+        new TaskSession(EMPTY_VALUE, configuredHunterId.get(), 0, List.of(), Instant.now());
+    if (activeSession.compareAndSet(null, created)) {
+      return created;
+    }
+    return activeSession.get();
+  }
+
+  private void updateSession(UnaryOperator<TaskSession> mutator) {
+    while (true) {
+      TaskSession current = activeSession.get();
+      TaskSession base = current != null ? current : ensureActiveSession();
+      TaskSession updated = mutator.apply(base);
+      if (activeSession.compareAndSet(base, updated)) {
+        return;
+      }
     }
   }
 }
