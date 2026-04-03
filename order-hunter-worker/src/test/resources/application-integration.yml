@@ -1,3 +1,7 @@
+spring:
+  application:
+    name: order-hunter-worker
+
 # Overrides for OrderHunterIntegrationTest (see integration-tests-plan.md).
 order-hunter:
   disable-jitter-randomize: true
@@ -12,3 +16,20 @@ logging:
   level:
     root: WARN
     name.golets.order.hunter.worker: INFO
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://localhost:4318/v1/traces
+    resource-attributes:
+      service.name: ${spring.application.name}
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0

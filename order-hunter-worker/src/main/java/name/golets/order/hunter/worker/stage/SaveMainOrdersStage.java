@@ -4,6 +4,7 @@ import java.util.List;
 import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
+import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.airportal.AirportalClient;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
@@ -85,6 +86,16 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
 
     return airportalClient
         .patchOrder(order.getSid(), order.getArtist())
+        .contextWrite(
+            reactorContext ->
+                reactorContext
+                    .put(
+                        FlowObservationContextKeys.SAVE_SPAN_NAME,
+                        "order-hunter.airportal.save.main")
+                    .put(FlowObservationContextKeys.SAVE_ORDER_KIND, "main")
+                    .put(
+                        FlowObservationContextKeys.SAVE_PRODUCT_TITLE,
+                        sanitizeProductTitle(order.getProductTitle())))
         .doOnNext(
             responseBody -> {
               result.addSavedOrder(order);
@@ -107,6 +118,10 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
                   error);
               return Mono.empty();
             });
+  }
+
+  private static String sanitizeProductTitle(String productTitle) {
+    return productTitle != null && !productTitle.isBlank() ? productTitle : "unknown";
   }
 
   private List<Order> readFilteredOrders(PollOrdersFlowContext context) {

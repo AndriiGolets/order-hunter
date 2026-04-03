@@ -1,11 +1,14 @@
 package name.golets.order.hunter.worker.stage;
 
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.event.OrderTaken;
+import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
@@ -27,14 +30,17 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
   private static final String EVENT_VERSION = "1.0";
   private static final int RETRY_ATTEMPTS = 3;
   private final OrderTakenSqsPublisher orderTakenSqsPublisher;
+  private final ObservationRegistry observationRegistry;
 
   /**
    * Creates stage dependencies for outbound notification.
    *
    * @param orderTakenSqsPublisher SQS publisher for OrderTaken events
    */
-  public NotifySqsStage(OrderTakenSqsPublisher orderTakenSqsPublisher) {
+  public NotifySqsStage(
+      OrderTakenSqsPublisher orderTakenSqsPublisher, ObservationRegistry observationRegistry) {
     this.orderTakenSqsPublisher = orderTakenSqsPublisher;
+    this.observationRegistry = observationRegistry;
   }
 
   /**
@@ -46,11 +52,22 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
    */
   @Override
   public Mono<Void> execute(PollOrdersFlowContext context) {
-    return Mono.defer(
-        () -> {
+    return Mono.deferContextual(
+        contextView -> {
           if (context.getStateManager() == null) {
             return Mono.empty();
           }
+          Observation observation =
+              Observation.createNotStarted(
+                      "order-hunter.sqs.publish.orderTaken", observationRegistry)
+                  .lowCardinalityKeyValue("operation", "publishOrderTaken");
+          if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
+            Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
+            if (parent instanceof Observation parentObservation) {
+              observation.parentObservation(parentObservation);
+            }
+          }
+          observation.start();
           reconcileHeadsConsistency(context);
           OrderTaken event = buildOrderTakenEvent(context);
           return orderTakenSqsPublisher
@@ -66,7 +83,9 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
                                   signal.totalRetries() + 1,
                                   context.getFlowRunId(),
                                   signal.failure())))
-              .doOnSuccess(ignored -> onPublished(context, event));
+              .doOnSuccess(ignored -> onPublished(context, event))
+              .doOnError(observation::error)
+              .doFinally(signalType -> observation.stop());
         });
   }
 

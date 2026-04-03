@@ -9,6 +9,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.observation.ObservationRegistry;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import name.golets.order.hunter.common.model.Order;
@@ -49,7 +50,7 @@ class NotifySqsStageTest {
     context.setSaveMainOrdersResult(saveMain);
 
     when(orderTakenSqsPublisher.publish(any())).thenReturn(Mono.empty());
-    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher);
+    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher, ObservationRegistry.create());
 
     StepVerifier.create(stage.execute(context)).verifyComplete();
 
@@ -88,7 +89,7 @@ class NotifySqsStageTest {
                         ? Mono.error(new IllegalStateException("sqs down"))
                         : Mono.empty()));
 
-    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher);
+    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher, ObservationRegistry.create());
 
     StepVerifier.create(stage.execute(context)).verifyComplete();
 

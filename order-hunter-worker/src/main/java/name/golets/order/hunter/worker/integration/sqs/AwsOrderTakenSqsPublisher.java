@@ -2,6 +2,8 @@ package name.golets.order.hunter.worker.integration.sqs;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
@@ -17,6 +19,7 @@ import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 public class AwsOrderTakenSqsPublisher implements OrderTakenSqsPublisher {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private final SqsAsyncClient sqsAsyncClient;
+  private final ObservationRegistry observationRegistry;
   private final String eventsQueue;
   private final AtomicReference<String> resolvedQueueUrl = new AtomicReference<>();
 
@@ -27,23 +30,35 @@ public class AwsOrderTakenSqsPublisher implements OrderTakenSqsPublisher {
    * @param properties worker properties with events queue value
    */
   public AwsOrderTakenSqsPublisher(
-      SqsAsyncClient sqsAsyncClient, OrderHunterProperties properties) {
+      SqsAsyncClient sqsAsyncClient,
+      OrderHunterProperties properties,
+      ObservationRegistry observationRegistry) {
     this.sqsAsyncClient = sqsAsyncClient;
+    this.observationRegistry = observationRegistry;
     this.eventsQueue = properties.getEventsQueue();
   }
 
   @Override
   public Mono<Void> publish(OrderTaken event) {
-    return resolveQueueUrl()
-        .flatMap(
-            queueUrl ->
-                Mono.fromFuture(
-                        sqsAsyncClient.sendMessage(
-                            SendMessageRequest.builder()
-                                .queueUrl(queueUrl)
-                                .messageBody(toJson(event))
-                                .build()))
-                    .then());
+    return Mono.defer(
+        () -> {
+          Observation observation =
+              Observation.createNotStarted(
+                      "order-hunter.sqs.publish.orderTaken", observationRegistry)
+                  .start();
+          return resolveQueueUrl()
+              .flatMap(
+                  queueUrl ->
+                      Mono.fromFuture(
+                              sqsAsyncClient.sendMessage(
+                                  SendMessageRequest.builder()
+                                      .queueUrl(queueUrl)
+                                      .messageBody(toJson(event))
+                                      .build()))
+                          .then())
+              .doOnError(observation::error)
+              .doFinally(signalType -> observation.stop());
+        });
   }
 
   private Mono<String> resolveQueueUrl() {

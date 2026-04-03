@@ -1,5 +1,7 @@
 package name.golets.order.hunter.worker.controller;
 
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import name.golets.order.hunter.worker.event.StartEvent;
 import name.golets.order.hunter.worker.event.StatusEvent;
 import name.golets.order.hunter.worker.event.StopEvent;
@@ -16,9 +18,12 @@ import reactor.core.publisher.Mono;
 public class SqsEventController {
 
   private final WorkerStateManager workerStateManager;
+  private final ObservationRegistry observationRegistry;
 
-  public SqsEventController(WorkerStateManager workerStateManager) {
+  public SqsEventController(
+      WorkerStateManager workerStateManager, ObservationRegistry observationRegistry) {
     this.workerStateManager = workerStateManager;
+    this.observationRegistry = observationRegistry;
   }
 
   /**
@@ -28,12 +33,14 @@ public class SqsEventController {
    * @return completion when state has been updated
    */
   public Mono<Void> onStart(StartEvent event) {
-    return Mono.fromRunnable(
-        () -> {
-          workerStateManager.setStarted(true);
-          workerStateManager.setHeadsToTake(event.getHeadsToTake());
-          workerStateManager.setOrderTypes(event.getOrderTypes());
-        });
+    return observe(
+        "order-hunter.sqs.command.start",
+        Mono.fromRunnable(
+            () -> {
+              workerStateManager.setStarted(true);
+              workerStateManager.setHeadsToTake(event.getHeadsToTake());
+              workerStateManager.setOrderTypes(event.getOrderTypes());
+            }));
   }
 
   /**
@@ -43,7 +50,9 @@ public class SqsEventController {
    * @return completion when state has been updated
    */
   public Mono<Void> onStop(StopEvent event) {
-    return Mono.fromRunnable(() -> workerStateManager.setStarted(false));
+    return observe(
+        "order-hunter.sqs.command.stop",
+        Mono.fromRunnable(() -> workerStateManager.setStarted(false)));
   }
 
   /**
@@ -53,6 +62,18 @@ public class SqsEventController {
    * @return snapshot of started flag, budgets, and session metadata
    */
   public Mono<WorkerStatusSnapshot> onStatus(StatusEvent event) {
-    return Mono.fromCallable(workerStateManager::toSnapshot);
+    return observe(
+        "order-hunter.sqs.command.status", Mono.fromCallable(workerStateManager::toSnapshot));
+  }
+
+  private <T> Mono<T> observe(String observationName, Mono<T> publisher) {
+    return Mono.defer(
+        () -> {
+          Observation observation =
+              Observation.createNotStarted(observationName, observationRegistry).start();
+          return publisher
+              .doOnError(observation::error)
+              .doFinally(signalType -> observation.stop());
+        });
   }
 }

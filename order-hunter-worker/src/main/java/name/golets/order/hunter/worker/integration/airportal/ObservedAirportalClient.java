@@ -10,6 +10,7 @@ import name.golets.order.hunter.common.model.ResultInfo;
 import name.golets.order.hunter.worker.config.OrderHunterInfrastructureConfiguration;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import name.golets.order.hunter.worker.error.WebClientError;
+import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.publisher.Mono;
+import reactor.util.context.ContextView;
 
 /**
  * WebClient-based airportal client with Micrometer observations around poll and save boundaries.
@@ -53,11 +55,14 @@ public class ObservedAirportalClient implements AirportalClient {
 
   @Override
   public Mono<OrdersResponse> pollOrders(String pathAndQuery) {
-    return Mono.defer(
-        () -> {
+    return Mono.deferContextual(
+        contextView -> {
           Observation observation =
-              Observation.createNotStarted("order-hunter.airportal.poll", observationRegistry)
-                  .lowCardinalityKeyValue("operation", "poll")
+              applyParentFlowObservation(
+                      Observation.createNotStarted(
+                              "order-hunter.airportal.poll", observationRegistry)
+                          .lowCardinalityKeyValue("operation", "poll"),
+                      contextView)
                   .start();
 
           return pollWebClient
@@ -84,12 +89,27 @@ public class ObservedAirportalClient implements AirportalClient {
   public Mono<String> patchOrder(String orderSid, String artistSid) {
     String path = buildSavePath(orderSid);
     Object requestBody = buildAssignArtistBody(artistSid);
-    return Mono.defer(
-        () -> {
+    return Mono.deferContextual(
+        contextView -> {
+          String spanName =
+              readContextOrDefault(
+                  contextView,
+                  FlowObservationContextKeys.SAVE_SPAN_NAME,
+                  "order-hunter.airportal.save");
+          String orderKind =
+              readContextOrDefault(
+                  contextView, FlowObservationContextKeys.SAVE_ORDER_KIND, "unknown");
+          String productTitle =
+              readContextOrDefault(
+                  contextView, FlowObservationContextKeys.SAVE_PRODUCT_TITLE, "unknown");
           Observation observation =
-              Observation.createNotStarted("order-hunter.airportal.save", observationRegistry)
-                  .lowCardinalityKeyValue("operation", "patchSave")
-                  .highCardinalityKeyValue("request.body", toJson(requestBody))
+              applyParentFlowObservation(
+                      Observation.createNotStarted(spanName, observationRegistry)
+                          .lowCardinalityKeyValue("operation", "patchSave")
+                          .lowCardinalityKeyValue("order.kind", orderKind)
+                          .highCardinalityKeyValue("order.productTitle", productTitle)
+                          .highCardinalityKeyValue("request.body", toJson(requestBody)),
+                      contextView)
                   .start();
 
           return saveWebClient
@@ -154,5 +174,26 @@ public class ObservedAirportalClient implements AirportalClient {
         .bodyToMono(String.class)
         .defaultIfEmpty("")
         .map(body -> WebClientError.fromResponse(response.statusCode().value(), body, errorUrl));
+  }
+
+  private Observation applyParentFlowObservation(Observation observation, ContextView contextView) {
+    if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
+      Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
+      if (parent instanceof Observation parentObservation) {
+        return observation.parentObservation(parentObservation);
+      }
+    }
+    return observation;
+  }
+
+  private String readContextOrDefault(ContextView contextView, String key, String defaultValue) {
+    if (!contextView.hasKey(key)) {
+      return defaultValue;
+    }
+    Object raw = contextView.get(key);
+    if (raw instanceof String text && !text.isBlank()) {
+      return text;
+    }
+    return defaultValue;
   }
 }

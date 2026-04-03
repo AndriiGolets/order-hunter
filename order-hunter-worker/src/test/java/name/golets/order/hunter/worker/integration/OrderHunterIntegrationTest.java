@@ -7,7 +7,13 @@ import static org.awaitility.Awaitility.await;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -32,9 +38,11 @@ import name.golets.order.hunter.worker.state.DefaultWorkerStateManager;
 import name.golets.order.hunter.worker.state.WorkerStateManager;
 import okhttp3.mockwebserver.MockWebServer;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -52,10 +60,13 @@ import reactor.test.StepVerifier;
  */
 @SpringBootTest(
     classes = {OrderHunterWorkerApplication.class, OrderHunterIntegrationTest.Config.class})
+@AutoConfigureTracing
 @ActiveProfiles("integration")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
 class OrderHunterIntegrationTest {
 
+  private static final String JAEGER_ENDPOINT = "http://localhost:16686/";
+  private static final Duration JAEGER_STARTUP_TIMEOUT = Duration.ofSeconds(30);
   private static final String TWO_HEAD_ORDER_SID = "ov2_recLQ1ExOBR4FuUjm";
 
   /**
@@ -88,6 +99,33 @@ class OrderHunterIntegrationTest {
   @Autowired private SqsEventController sqsEventController;
   @Autowired private WorkerStarter workerStarter;
   @Autowired private WorkerStateManager workerStateManager;
+
+  @BeforeAll
+  static void startJaegerForTracing() throws InterruptedException {
+    try {
+      Path composeFile = resolveComposeFile();
+      Process process =
+          new ProcessBuilder(
+                  "docker", "compose", "-f", composeFile.toString(), "up", "-d", "jaeger")
+              .redirectErrorStream(true)
+              .start();
+      String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      int exitCode = process.waitFor();
+      if (exitCode != 0) {
+        System.err.println(
+            "Skipping Jaeger startup for integration tests. docker compose returned "
+                + exitCode
+                + ". Output: "
+                + output);
+        return;
+      }
+      waitForJaegerReadiness();
+    } catch (IOException e) {
+      System.err.println(
+          "Skipping Jaeger startup for integration tests because docker is unavailable: "
+              + e.getMessage());
+    }
+  }
 
   @AfterAll
   static void stopMockServer() throws IOException {
@@ -455,6 +493,42 @@ class OrderHunterIntegrationTest {
     } catch (IOException e) {
       throw new IllegalStateException(e);
     }
+  }
+
+  private static Path resolveComposeFile() {
+    Path rootCandidate = Path.of("docker-compose.yml");
+    if (Files.exists(rootCandidate)) {
+      return rootCandidate;
+    }
+    Path moduleCandidate = Path.of("order-hunter-worker", "docker-compose.yml");
+    if (Files.exists(moduleCandidate)) {
+      return moduleCandidate;
+    }
+    throw new IllegalStateException("Cannot locate docker-compose.yml for order-hunter-worker");
+  }
+
+  private static void waitForJaegerReadiness() throws InterruptedException {
+    HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+    long deadlineNanos = System.nanoTime() + JAEGER_STARTUP_TIMEOUT.toNanos();
+    while (System.nanoTime() < deadlineNanos) {
+      try {
+        HttpResponse<Void> response =
+            client.send(
+                HttpRequest.newBuilder()
+                    .uri(URI.create(JAEGER_ENDPOINT))
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.discarding());
+        if (response.statusCode() < 500) {
+          return;
+        }
+      } catch (IOException ignored) {
+        // Wait for Jaeger container startup to complete.
+      }
+      Thread.sleep(500);
+    }
+    throw new IllegalStateException("Jaeger did not become ready within " + JAEGER_STARTUP_TIMEOUT);
   }
 
   @Configuration
