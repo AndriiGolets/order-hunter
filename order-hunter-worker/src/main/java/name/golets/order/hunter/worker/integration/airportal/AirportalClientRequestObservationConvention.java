@@ -25,6 +25,11 @@ public class AirportalClientRequestObservationConvention
     if (orderKind != null) {
       keyValues = keyValues.and(KeyValue.of("order.kind", orderKind));
     }
+    String beforeSavesDelay =
+        readRequestAttribute(context, FlowObservationContextKeys.SAVE_BEFORE_SAVES_DELAY);
+    if (beforeSavesDelay != null) {
+      keyValues = keyValues.and(KeyValue.of("before.saves.delay", beforeSavesDelay));
+    }
     if (isServerError(context)) {
       // Jaeger highlights spans as errors based on this conventional tag.
       keyValues = keyValues.and(KeyValue.of("error", "true"));

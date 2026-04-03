@@ -68,11 +68,15 @@ public class ObservedAirportalClient implements AirportalClient {
           String productTitle =
               readContextOrDefault(
                   contextView, FlowObservationContextKeys.SAVE_PRODUCT_TITLE, "unknown");
+          String beforeSavesDelay =
+              readContextOrDefault(
+                  contextView, FlowObservationContextKeys.SAVE_BEFORE_SAVES_DELAY, "0");
           return saveWebClient
               .patch()
               .uri(path)
               .attribute(FlowObservationContextKeys.SAVE_ORDER_KIND, orderKind)
               .attribute(FlowObservationContextKeys.SAVE_PRODUCT_TITLE, productTitle)
+              .attribute(FlowObservationContextKeys.SAVE_BEFORE_SAVES_DELAY, beforeSavesDelay)
               .bodyValue(requestBody)
               .retrieve()
               .onStatus(HttpStatusCode::isError, response -> mapErrorResponse(response, path))

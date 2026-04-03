@@ -2,13 +2,16 @@ package name.golets.order.hunter.worker.stage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
+import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.airportal.AirportalClient;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
@@ -84,5 +87,44 @@ class SaveMainOrdersStageTest {
     verify(airportalClient, times(1)).patchOrder("sid-valid", "artist-valid");
     verify(stateManager, times(1)).registerSuccessfulSave(valid);
     assertEquals(List.of(valid), context.getSaveMainOrdersResult().getSavedOrders());
+  }
+
+  /**
+   * Verifies each main-order save computes and propagates before-save delay to outbound request
+   * observation context.
+   */
+  @Test
+  void execute_addsBeforeSaveDelayToPatchContext() {
+    Order first = new Order().setSid("sid-1").setArtist("artist-1");
+    Order second = new Order().setSid("sid-2").setArtist("artist-2");
+    FilterRecordsStageResult filterResult = new FilterRecordsStageResult();
+    filterResult.addFilteredOrder(first);
+    filterResult.addFilteredOrder(second);
+
+    AtomicInteger seenCalls = new AtomicInteger();
+    when(airportalClient.patchOrder(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            ignored ->
+                Mono.deferContextual(
+                    contextView -> {
+                      String delayText =
+                          contextView.get(FlowObservationContextKeys.SAVE_BEFORE_SAVES_DELAY);
+                      int delay = Integer.parseInt(delayText);
+                      assertTrue(delay >= 0 && delay <= 7);
+                      seenCalls.incrementAndGet();
+                      return Mono.just("ok");
+                    }));
+
+    OrderHunterProperties properties = new OrderHunterProperties();
+    properties.setBeforeOrderSavingJitterMax(7);
+    SaveMainOrdersStage stage = new SaveMainOrdersStage(airportalClient, properties);
+
+    PollOrdersFlowContext context = PollOrdersFlowContext.begin(stateManager);
+    context.setFilterRecordsResult(filterResult);
+
+    StepVerifier.create(stage.execute(context)).verifyComplete();
+
+    assertEquals(2, seenCalls.get());
   }
 }

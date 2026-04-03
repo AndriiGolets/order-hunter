@@ -37,6 +37,28 @@ class AirportalClientRequestObservationConventionTest {
                 "order.kind".equals(keyValue.getKey()) && "main".equals(keyValue.getValue()));
   }
 
+  /** Ensures per-order before-save delay is exported on HTTP client spans. */
+  @Test
+  void getLowCardinalityKeyValues_includesBeforeSavesDelayWhenPresent() {
+    AirportalClientRequestObservationConvention convention =
+        new AirportalClientRequestObservationConvention();
+    ClientRequest request =
+        ClientRequest.create(HttpMethod.PATCH, URI.create("http://localhost/api/records/id"))
+            .attribute(FlowObservationContextKeys.SAVE_BEFORE_SAVES_DELAY, "17")
+            .build();
+    ClientRequestObservationContext context =
+        new ClientRequestObservationContext(
+            ClientRequest.create(HttpMethod.PATCH, URI.create("http://localhost/api/records/id")));
+    context.setRequest(request);
+
+    KeyValues keyValues = convention.getLowCardinalityKeyValues(context);
+
+    assertThat(keyValues.stream())
+        .anyMatch(
+            keyValue ->
+                "before.saves.delay".equals(keyValue.getKey()) && "17".equals(keyValue.getValue()));
+  }
+
   /** Ensures product title is exported as a high-cardinality tag on HTTP client spans. */
   @Test
   void getHighCardinalityKeyValues_includesProductTitleWhenPresent() {

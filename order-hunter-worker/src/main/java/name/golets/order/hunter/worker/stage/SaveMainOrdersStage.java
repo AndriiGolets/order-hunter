@@ -1,6 +1,8 @@
 package name.golets.order.hunter.worker.stage;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
@@ -26,6 +28,8 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(SaveMainOrdersStage.class);
   private final AirportalClient airportalClient;
   private final int maxParallelOrdersToSaveThreads;
+  private final int beforeOrderSavingJitterMax;
+  private final boolean disableJitterRandomize;
 
   /**
    * Creates stage dependencies for parallel main-order save operations.
@@ -37,6 +41,8 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
     this.airportalClient = airportalClient;
     this.maxParallelOrdersToSaveThreads =
         Math.max(1, properties.getMaxParallelOrdersToSaveThreads());
+    this.beforeOrderSavingJitterMax = Math.max(0, properties.getBeforeOrderSavingJitterMax());
+    this.disableJitterRandomize = properties.isDisableJitterRandomize();
   }
 
   /**
@@ -84,15 +90,27 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
       return Mono.empty();
     }
 
-    return airportalClient
-        .patchOrder(order.getSid(), order.getArtist())
-        .contextWrite(
-            reactorContext ->
-                reactorContext
-                    .put(FlowObservationContextKeys.SAVE_ORDER_KIND, "main")
-                    .put(
-                        FlowObservationContextKeys.SAVE_PRODUCT_TITLE,
-                        sanitizeProductTitle(order.getProductTitle())))
+    int delayMillis = computeBeforeSaveDelayMillis();
+    Mono<String> saveOrderMono =
+        airportalClient
+            .patchOrder(order.getSid(), order.getArtist())
+            .contextWrite(
+                reactorContext ->
+                    reactorContext
+                        .put(FlowObservationContextKeys.SAVE_ORDER_KIND, "main")
+                        .put(
+                            FlowObservationContextKeys.SAVE_PRODUCT_TITLE,
+                            sanitizeProductTitle(order.getProductTitle()))
+                        .put(
+                            FlowObservationContextKeys.SAVE_BEFORE_SAVES_DELAY,
+                            Integer.toString(delayMillis)));
+
+    Mono<String> delayedSaveMono =
+        delayMillis > 0
+            ? Mono.delay(Duration.ofMillis(delayMillis)).then(saveOrderMono)
+            : saveOrderMono;
+
+    return delayedSaveMono
         .doOnNext(
             responseBody -> {
               result.addSavedOrder(order);
@@ -115,6 +133,16 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
                   error);
               return Mono.empty();
             });
+  }
+
+  private int computeBeforeSaveDelayMillis() {
+    if (beforeOrderSavingJitterMax == 0) {
+      return 0;
+    }
+    if (disableJitterRandomize) {
+      return beforeOrderSavingJitterMax;
+    }
+    return ThreadLocalRandom.current().nextInt(0, beforeOrderSavingJitterMax + 1);
   }
 
   private static String sanitizeProductTitle(String productTitle) {
