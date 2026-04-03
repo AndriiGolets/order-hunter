@@ -7,6 +7,9 @@ import lombok.Getter;
 import name.golets.order.hunter.common.flow.StageResult;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.stage.SaveMainOrdersStage;
+import name.golets.order.hunter.worker.util.JsonUtil;
+import name.golets.order.hunter.worker.util.SimplifiedOrder;
+import name.golets.order.hunter.worker.util.SimplifiedOrdersMapper;
 
 /** Main orders successfully persisted via PATCH in {@link SaveMainOrdersStage}. */
 @Getter
@@ -30,4 +33,12 @@ public class SaveMainOrdersStageResult implements StageResult<SaveMainOrdersStag
       savedOrders.add(order);
     }
   }
+
+  @Override
+  public String toString() {
+    return JsonUtil.toOneLineJson(
+        new ResultLogPayload(savedOrders.size(), SimplifiedOrdersMapper.map(savedOrders)));
+  }
+
+  private record ResultLogPayload(int savedMainCount, List<SimplifiedOrder> savedOrders) {}
 }

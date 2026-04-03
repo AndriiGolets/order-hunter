@@ -3,16 +3,17 @@ package name.golets.order.hunter.worker.stage;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.airportal.AirportalClient;
+import name.golets.order.hunter.worker.stage.inputs.SaveMainOrdersStageInput;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -24,7 +25,9 @@ import reactor.core.publisher.Mono;
  * read the context until subscribe time (after prior stages have populated filter results).
  */
 @Component
-public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
+public class SaveMainOrdersStage
+    extends AbstractStage<
+        PollOrdersFlowContext, SaveMainOrdersStageInput, SaveMainOrdersStageResult> {
   private static final Logger log = LoggerFactory.getLogger(SaveMainOrdersStage.class);
   private final AirportalClient airportalClient;
   private final int maxParallelOrdersToSaveThreads;
@@ -45,49 +48,50 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
     this.disableJitterRandomize = properties.isDisableJitterRandomize();
   }
 
-  /**
-   * Saves filtered main orders in parallel. Failures of individual orders are logged and skipped,
-   * while successful saves are reflected in stage result and state manager.
-   *
-   * @param context flow session context
-   * @return completion after all save branches complete
-   */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
-    return Mono.defer(
-        () -> {
-          SaveMainOrdersStageResult result = new SaveMainOrdersStageResult();
-          context.setSaveMainOrdersResult(result);
+  protected SaveMainOrdersStageInput prepareInput(PollOrdersFlowContext context) {
+    FilterRecordsStageResult filterResult = context.getFilterRecordsResult();
+    List<Order> filteredOrders =
+        filterResult != null ? filterResult.getFilteredOrders() : List.of();
+    return new SaveMainOrdersStageInput(
+        context.getStateManager(), context.getSessionMarker(), filteredOrders);
+  }
 
-          if (context.getStateManager() == null) {
-            return Mono.empty();
-          }
-          List<Order> filteredOrders = readFilteredOrders(context);
-          if (filteredOrders.isEmpty()) {
-            log.debug(
-                context.getSessionMarker(),
-                "saveMainOrdersStage result stored for flowRunId={} savedCount=0",
-                context.getFlowRunId());
-            return Mono.empty();
-          }
+  @Override
+  protected Mono<SaveMainOrdersStageResult> process(SaveMainOrdersStageInput input) {
+    SaveMainOrdersStageResult result = new SaveMainOrdersStageResult();
+    if (input.getStateManager() == null || input.getFilteredOrders().isEmpty()) {
+      return Mono.just(result);
+    }
+    return Flux.fromIterable(input.getFilteredOrders())
+        .flatMap(order -> saveOneMainOrder(input, result, order), maxParallelOrdersToSaveThreads)
+        .then(Mono.just(result));
+  }
 
-          return Flux.fromIterable(filteredOrders)
-              .flatMap(
-                  order -> saveOneMainOrder(context, result, order), maxParallelOrdersToSaveThreads)
-              .then(Mono.fromRunnable(() -> logResult(context, result)));
-        });
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, SaveMainOrdersStageResult result) {
+    context.setSaveMainOrdersResult(result);
+  }
+
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "saveMainOrdersStage";
   }
 
   private Mono<Void> saveOneMainOrder(
-      PollOrdersFlowContext context, SaveMainOrdersStageResult result, Order order) {
+      SaveMainOrdersStageInput input, SaveMainOrdersStageResult result, Order order) {
     if (order == null || order.getSid() == null || order.getArtist() == null) {
-      log.error(
-          context.getSessionMarker(),
-          "saveMainOrdersStage skipped invalid order for flowRunId={} orderSid={} artistSid={}",
-          context.getFlowRunId(),
-          order != null ? order.getSid() : null,
-          order != null ? order.getArtist() : null);
-      return Mono.empty();
+      return Mono.error(
+          new IllegalStateException(
+              "Invalid order in saveMainOrdersStage orderSid="
+                  + (order != null ? order.getSid() : null)
+                  + " artistSid="
+                  + (order != null ? order.getArtist() : null)));
     }
 
     int delayMillis = computeBeforeSaveDelayMillis();
@@ -114,25 +118,21 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
         .doOnNext(
             responseBody -> {
               result.addSavedOrder(order);
-              context.getStateManager().registerSuccessfulSave(order);
+              input.getStateManager().registerSuccessfulSave(order);
               log.debug(
-                  context.getSessionMarker(),
-                  "saveMainOrdersStage saved order for flowRunId={} orderSid={} responseLength={}",
-                  context.getFlowRunId(),
+                  input.getSessionMarker(),
+                  "saveMainOrdersStage saved order orderSid={} responseLength={}",
                   order.getSid(),
                   responseBody != null ? responseBody.length() : 0);
             })
-        .then()
-        .onErrorResume(
-            error -> {
-              log.error(
-                  context.getSessionMarker(),
-                  "saveMainOrdersStage failed for flowRunId={} orderSid={}",
-                  context.getFlowRunId(),
-                  order.getSid(),
-                  error);
-              return Mono.empty();
-            });
+        .doOnError(
+            error ->
+                log.error(
+                    input.getSessionMarker(),
+                    "saveMainOrdersStage failed orderSid={}",
+                    order.getSid(),
+                    error))
+        .then();
   }
 
   private int computeBeforeSaveDelayMillis() {
@@ -147,21 +147,5 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
 
   private static String sanitizeProductTitle(String productTitle) {
     return productTitle != null && !productTitle.isBlank() ? productTitle : "unknown";
-  }
-
-  private List<Order> readFilteredOrders(PollOrdersFlowContext context) {
-    FilterRecordsStageResult filterResult = context.getFilterRecordsResult();
-    if (filterResult == null) {
-      return List.of();
-    }
-    return filterResult.getFilteredOrders();
-  }
-
-  private void logResult(PollOrdersFlowContext context, SaveMainOrdersStageResult result) {
-    log.debug(
-        context.getSessionMarker(),
-        "saveMainOrdersStage result stored for flowRunId={} savedCount={}",
-        context.getFlowRunId(),
-        result.getSavedOrders().size());
   }
 }

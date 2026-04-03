@@ -12,6 +12,11 @@ import java.util.List;
 import java.util.Set;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.event.OrderTaken;
+import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
+import name.golets.order.hunter.worker.stage.results.ParseOrdersStageResult;
+import name.golets.order.hunter.worker.stage.results.PollRecordsStageResult;
+import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
+import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import org.junit.jupiter.api.Test;
 
 /** Verifies stable JSON payload generation used by observation tags. */
@@ -76,10 +81,67 @@ class JsonUtilTest {
     assertThat(root).isEmpty();
   }
 
+  /**
+   * Ensures generic one-line JSON conversion returns compact JSON on a single line.
+   *
+   * @throws JsonProcessingException when JSON parsing fails
+   */
+  @Test
+  void toOneLineJson_returnsCompactSingleLineJson() throws JsonProcessingException {
+    String json = JsonUtil.toOneLineJson(new Payload("value", 7));
+
+    assertThat(json).doesNotContain("\n");
+    JsonNode root = OBJECT_MAPPER.readTree(json);
+    assertThat(root.path("name").asText()).isEqualTo("value");
+    assertThat(root.path("count").asInt()).isEqualTo(7);
+  }
+
+  /**
+   * Ensures stage result toString implementations return valid single-line JSON payloads.
+   *
+   * @throws JsonProcessingException when JSON parsing fails
+   */
+  @Test
+  void stageResultToString_outputsValidJson() throws JsonProcessingException {
+    PollRecordsStageResult poll = new PollRecordsStageResult();
+    poll.getOrdersResponse()
+        .setRecords(List.of(new name.golets.order.hunter.common.model.Record().setSid("sid-1")));
+
+    ParseOrdersStageResult parse = new ParseOrdersStageResult();
+    parse
+        .getParsedOrders()
+        .getOrdersMapBySid()
+        .put("sid-1", new Order().setSid("sid-1").setHeads(2));
+
+    FilterRecordsStageResult filter = new FilterRecordsStageResult();
+    filter.addFilteredOrder(new Order().setSid("sid-1").setHeads(2));
+
+    SaveMainOrdersStageResult saveMain = new SaveMainOrdersStageResult();
+    saveMain.addSavedOrder(new Order().setSid("sid-1").setHeads(2));
+
+    SaveHelpersStageResult saveHelpers = new SaveHelpersStageResult();
+    saveHelpers.addSavedOrder(new Order().setSid("helper-1").setHeads(1));
+
+    assertSingleLineJson(poll.toString(), "recordsCount");
+    assertSingleLineJson(parse.toString(), "mainCount");
+    assertSingleLineJson(filter.toString(), "filteredCount");
+    assertSingleLineJson(saveMain.toString(), "savedMainCount");
+    assertSingleLineJson(saveHelpers.toString(), "savedHelpersCount");
+  }
+
   private static Set<String> fieldNames(JsonNode node) {
     Set<String> names = new HashSet<>();
     Iterator<String> iterator = node.fieldNames();
     iterator.forEachRemaining(names::add);
     return names;
   }
+
+  private static void assertSingleLineJson(String json, String expectedField)
+      throws JsonProcessingException {
+    assertThat(json).doesNotContain("\n");
+    JsonNode root = OBJECT_MAPPER.readTree(json);
+    assertThat(root.has(expectedField)).isTrue();
+  }
+
+  private record Payload(String name, int count) {}
 }

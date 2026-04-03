@@ -67,8 +67,6 @@ class TracingIntegrationTest {
   private static final String FLOW_CYCLE_SPAN_NAME = "order-hunter.flow.cycle";
   private static final String SQS_START_SPAN_NAME = "order-hunter.sqs.command.start";
   private static final String SQS_STOP_SPAN_NAME = "order-hunter.sqs.command.stop";
-  private static final String SQS_PUBLISH_SPAN_NAME = "order-hunter.sqs.publish.orderTaken";
-  private static final String STATISTICS_SPAN_NAME = "order-hunter.flow.statistics";
   private static final Duration JAEGER_STARTUP_TIMEOUT = Duration.ofSeconds(30);
   private static final String TWO_HEAD_ORDER_SID = "ov2_recLQ1ExOBR4FuUjm";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -119,9 +117,8 @@ class TracingIntegrationTest {
   }
 
   /**
-   * Reuses the scenario-7 behavior: first filtered main save fails while remaining mains complete
-   * in parallel, then verifies Jaeger contains one flow-cycle root span with airportal WebClient
-   * child spans and traced SQS command spans.
+   * Verifies fail-fast stage behavior is still traced: first filtered main save fails, flow root
+   * and WebClient error spans are present, and start/stop command spans are traced.
    */
   @Test
   void scenario7_emitsTracesVisibleInJaeger() {
@@ -138,30 +135,17 @@ class TracingIntegrationTest {
 
     await()
         .atMost(90, SECONDS)
-        .until(
-            () ->
-                filteredMainSids.stream()
-                    .allMatch(sid -> DISPATCHER.getPatchAttemptsForOrderSid(sid) >= 1));
+        .until(() -> DISPATCHER.getPatchAttemptsForOrderSid(TWO_HEAD_ORDER_SID) >= 1);
 
     sqsEventController.onStop(new StopEvent()).block(Duration.ofSeconds(5));
 
     await().atMost(180, SECONDS).until(TracingIntegrationTest::hasFlowCycleSpan);
-    await().atMost(90, SECONDS).until(TracingIntegrationTest::hasPopulatedStatisticsStateTags);
     assertThat(hasFlowCycleSpan()).as("Jaeger API should show flow root span").isTrue();
     assertThat(hasOrderKindTagValue("main"))
         .as("Jaeger API should show WebClient span with order.kind=main")
         .isTrue();
-    assertThat(hasOrderKindTagValue("helper"))
-        .as("Jaeger API should show WebClient span with order.kind=helper")
-        .isTrue();
     assertThat(hasClientUrlTag())
         .as("Jaeger API should show automatic HTTP URL tags on WebClient spans")
-        .isTrue();
-    assertThat(hasStatisticsStageSpan())
-        .as("Jaeger API should show statistics span with polled and filtered order tags")
-        .isTrue();
-    assertThat(hasPopulatedStatisticsStateTags())
-        .as("Jaeger API should show non-empty statistics state tags")
         .isTrue();
     assertThat(hasWebClientServerErrorTag())
         .as("Jaeger API should mark failed WebClient span with error=true and error.type")
@@ -169,16 +153,9 @@ class TracingIntegrationTest {
     assertThat(hasSqsCommandSpans())
         .as("Jaeger API should show traced SQS start/stop command spans")
         .isTrue();
-    assertThat(hasSqsPublishSpan()).as("Jaeger API should show traced SQS publish span").isTrue();
-    assertThat(hasSqsPublishSpanWithSimplifiedOrderTakenTag())
-        .as("Jaeger API should include simplified orderTaken payload on SQS publish span")
-        .isTrue();
     assertThat(LAST_ORDER_TAKEN_EVENT.get())
-        .as("integration test should capture published OrderTaken payload")
-        .isNotNull();
-    assertThat(LAST_ORDER_TAKEN_EVENT.get().getSavedOrders())
-        .as("published OrderTaken payload should include saved orders")
-        .isNotEmpty();
+        .as("fail-fast flow should not reach outbound OrderTaken publish")
+        .isNull();
   }
 
   private static boolean isDockerComposeAvailable() {
@@ -356,59 +333,6 @@ class TracingIntegrationTest {
     return false;
   }
 
-  private static boolean hasStatisticsStageSpan() {
-    try {
-      HttpResponse<String> response =
-          HTTP_CLIENT.send(
-              HttpRequest.newBuilder()
-                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      if (response.statusCode() >= 400) {
-        return false;
-      }
-      JsonNode root = OBJECT_MAPPER.readTree(response.body());
-      for (JsonNode trace : root.path("data")) {
-        for (JsonNode span : trace.path("spans")) {
-          if (!STATISTICS_SPAN_NAME.equals(span.path("operationName").asText(""))) {
-            continue;
-          }
-          if (hasTagKeyContaining(span, "orders.main.polled")
-              && hasTagKeyContaining(span, "orders.helpers.polled")
-              && hasTagKeyContaining(span, "orders.main.filtered")
-              && hasTagValueContaining(span, "orders.main.polled", "\"heads\":")
-              && hasTagValueContaining(span, "orders.helpers.polled", "\"heads\":")
-              && hasTagValueContaining(span, "orders.main.filtered", "\"heads\":")
-              && hasTagKeyContaining(span, "state.headsToTake")
-              && hasTagKeyContaining(span, "state.headsTaken")) {
-            return true;
-          }
-        }
-      }
-      return false;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      return false;
-    } catch (IOException e) {
-      return false;
-    }
-  }
-
-  private static boolean hasTagValueContaining(JsonNode span, String key, String valueFragment) {
-    for (JsonNode tag : span.path("tags")) {
-      if (!key.equals(tag.path("key").asText(""))) {
-        continue;
-      }
-      String tagValue = tag.path("value").asText("");
-      if (tagValue.contains(valueFragment)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   private static boolean hasWebClientServerErrorTag() {
     try {
       HttpResponse<String> response =
@@ -477,117 +401,6 @@ class TracingIntegrationTest {
     } catch (IOException e) {
       return false;
     }
-  }
-
-  private static boolean hasSqsPublishSpan() {
-    try {
-      HttpResponse<String> response =
-          HTTP_CLIENT.send(
-              HttpRequest.newBuilder()
-                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      if (response.statusCode() >= 400) {
-        return false;
-      }
-      JsonNode root = OBJECT_MAPPER.readTree(response.body());
-      for (JsonNode trace : root.path("data")) {
-        for (JsonNode span : trace.path("spans")) {
-          if (SQS_PUBLISH_SPAN_NAME.equals(span.path("operationName").asText(""))) {
-            return true;
-          }
-        }
-      }
-      return false;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      return false;
-    } catch (IOException e) {
-      return false;
-    }
-  }
-
-  private static boolean hasSqsPublishSpanWithSimplifiedOrderTakenTag() {
-    try {
-      HttpResponse<String> response =
-          HTTP_CLIENT.send(
-              HttpRequest.newBuilder()
-                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      if (response.statusCode() >= 400) {
-        return false;
-      }
-      JsonNode root = OBJECT_MAPPER.readTree(response.body());
-      for (JsonNode trace : root.path("data")) {
-        for (JsonNode span : trace.path("spans")) {
-          if (!SQS_PUBLISH_SPAN_NAME.equals(span.path("operationName").asText(""))) {
-            continue;
-          }
-          if (hasTagValueContaining(span, "orderTaken", "\"savedOrders\":[")
-              && hasTagValueContaining(span, "orderTaken", "\"sid\"")
-              && hasTagValueContaining(span, "orderTaken", "\"heads\"")
-              && !hasTagValueContaining(span, "orderTaken", "\"artist\"")) {
-            return true;
-          }
-        }
-      }
-      return false;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      return false;
-    } catch (IOException e) {
-      return false;
-    }
-  }
-
-  private static boolean hasPopulatedStatisticsStateTags() {
-    try {
-      HttpResponse<String> response =
-          HTTP_CLIENT.send(
-              HttpRequest.newBuilder()
-                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      if (response.statusCode() >= 400) {
-        return false;
-      }
-      JsonNode root = OBJECT_MAPPER.readTree(response.body());
-      for (JsonNode trace : root.path("data")) {
-        for (JsonNode span : trace.path("spans")) {
-          if (!STATISTICS_SPAN_NAME.equals(span.path("operationName").asText(""))) {
-            continue;
-          }
-          if (hasTagValueNotEqual(span, "state.headsToTake", "0")
-              && hasTagKeyContaining(span, "state.headsTaken")
-              && hasTagKeyContaining(span, "state.savedOrderSidsCount")) {
-            return true;
-          }
-        }
-      }
-      return false;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      return false;
-    } catch (IOException e) {
-      return false;
-    }
-  }
-
-  private static boolean hasTagValueNotEqual(JsonNode span, String key, String excludedValue) {
-    for (JsonNode tag : span.path("tags")) {
-      if (!key.equals(tag.path("key").asText(""))) {
-        continue;
-      }
-      return !excludedValue.equals(tag.path("value").asText(""));
-    }
-    return false;
   }
 
   private static FreeOrdersFixtureSelection selectFreeOrdersNormalMains(int headsToTake) {

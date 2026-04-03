@@ -7,7 +7,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.common.model.ParsedOrders;
@@ -24,7 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-/** Unit tests for helper-order parallel save behavior and branch-level error isolation. */
+/** Unit tests for helper-order parallel save behavior and strict failure propagation. */
 @ExtendWith(MockitoExtension.class)
 class SaveHelpersStageTest {
 
@@ -72,9 +71,9 @@ class SaveHelpersStageTest {
     assertEquals(2, context.getSaveHelpersResult().getSavedOrders().size());
   }
 
-  /** Verifies one failed helper save does not interrupt other parallel helper save branches. */
+  /** Verifies helper save failure is propagated and not silently ignored. */
   @Test
-  void execute_continuesWhenOneHelperSaveFails() {
+  void execute_whenOneHelperSaveFails_propagatesError() {
     Order filteredMain = new Order().setSid("main-1");
     FilterRecordsStageResult filterResult = new FilterRecordsStageResult();
     filterResult.addFilteredOrder(filteredMain);
@@ -102,11 +101,12 @@ class SaveHelpersStageTest {
     context.setFilterRecordsResult(filterResult);
     context.setParseOrdersResult(parseResult);
 
-    StepVerifier.create(stage.execute(context)).verifyComplete();
+    StepVerifier.create(stage.execute(context))
+        .expectErrorSatisfies(error -> assertEquals("server failure", error.getMessage()))
+        .verify();
 
     verify(airportalClient).patchOrder("helper-ok", "artist-ok");
     verify(airportalClient).patchOrder("helper-fail", "artist-fail");
     verify(stateManager, times(1)).registerSuccessfulSave(helperSuccess);
-    assertEquals(List.of(helperSuccess), context.getSaveHelpersResult().getSavedOrders());
   }
 }

@@ -7,15 +7,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeSet;
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
+import name.golets.order.hunter.worker.stage.inputs.StatisticStageInput;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import name.golets.order.hunter.worker.util.JsonUtil;
+import org.slf4j.Marker;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -25,7 +26,9 @@ import reactor.core.publisher.Mono;
  * <p>The stage is a no-op when no main orders were parsed for the current flow run.
  */
 @Component
-public class StatisticStage implements Stage<PollOrdersFlowContext> {
+public class StatisticStage
+    extends AbstractStage<
+        PollOrdersFlowContext, StatisticStageInput, StatisticStage.StatisticStageResult> {
   private static final String SPAN_NAME = "order-hunter.flow.statistics";
 
   private final ObservationRegistry observationRegistry;
@@ -39,24 +42,24 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
     this.observationRegistry = observationRegistry;
   }
 
-  /**
-   * Emits a dedicated statistics observation when parsed main orders are present in flow context.
-   *
-   * @param context flow session context
-   * @return completion after statistics observation is emitted
-   */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
+  protected StatisticStageInput prepareInput(PollOrdersFlowContext context) {
+    return new StatisticStageInput(
+        context,
+        context.getParseOrdersResult() != null
+            ? context.getParseOrdersResult().getParsedOrders()
+            : null);
+  }
+
+  @Override
+  protected Mono<StatisticStageResult> process(StatisticStageInput input) {
     return Mono.deferContextual(
         contextView ->
-            Mono.fromRunnable(
+            Mono.fromSupplier(
                 () -> {
-                  ParsedOrders parsedOrders =
-                      context.getParseOrdersResult() != null
-                          ? context.getParseOrdersResult().getParsedOrders()
-                          : null;
+                  ParsedOrders parsedOrders = input.getParsedOrders();
                   if (parsedOrders == null || parsedOrders.getOrdersMapBySid().isEmpty()) {
-                    return;
+                    return new StatisticStageResult(false);
                   }
                   Observation observation =
                       Observation.createNotStarted(SPAN_NAME, observationRegistry)
@@ -69,12 +72,28 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
                   }
                   observation.start();
                   try {
-                    appendOrderTags(observation, parsedOrders, context);
-                    appendStateTags(observation, context);
+                    appendOrderTags(observation, parsedOrders, input.getContext());
+                    appendStateTags(observation, input.getContext());
                   } finally {
                     observation.stop();
                   }
+                  return new StatisticStageResult(true);
                 }));
+  }
+
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, StatisticStageResult result) {
+    // No flow context write is needed for statistics stage.
+  }
+
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "statisticStage";
   }
 
   private void appendOrderTags(
@@ -149,5 +168,12 @@ public class StatisticStage implements Stage<PollOrdersFlowContext> {
 
   private static String defaultText(String value) {
     return value != null ? value : "";
+  }
+
+  record StatisticStageResult(boolean emitted) {
+    @Override
+    public String toString() {
+      return JsonUtil.toOneLineJson(this);
+    }
   }
 }

@@ -20,7 +20,6 @@ import org.springframework.web.reactive.function.client.WebClientRequestExceptio
 @Getter
 @Setter
 public final class PollOrdersFlowContext {
-
   private final WorkerStateManager stateManager;
   private final String flowRunId;
   private final Marker sessionMarker;

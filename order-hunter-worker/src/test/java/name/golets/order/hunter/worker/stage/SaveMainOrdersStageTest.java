@@ -1,13 +1,11 @@
 package name.golets.order.hunter.worker.stage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
@@ -23,19 +21,16 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-/** Unit tests for parallel main-order save behavior and per-branch error isolation. */
+/** Unit tests for parallel main-order save behavior and strict failure propagation. */
 @ExtendWith(MockitoExtension.class)
 class SaveMainOrdersStageTest {
 
   @Mock private AirportalClient airportalClient;
   @Mock private WorkerStateManager stateManager;
 
-  /**
-   * Verifies failed order branches are logged/skipped while successful branches update state and
-   * stage result.
-   */
+  /** Verifies failed order branches propagate error and are not silently ignored. */
   @Test
-  void execute_continuesWhenOneSaveFailsAndKeepsSuccessfulSaves() {
+  void execute_whenOneSaveFails_propagatesError() {
     Order first = new Order().setSid("sid-1").setArtist("artist-1");
     Order second = new Order().setSid("sid-2").setArtist("artist-2");
     FilterRecordsStageResult filterResult = new FilterRecordsStageResult();
@@ -53,28 +48,21 @@ class SaveMainOrdersStageTest {
     PollOrdersFlowContext context = PollOrdersFlowContext.begin(stateManager);
     context.setFilterRecordsResult(filterResult);
 
-    StepVerifier.create(stage.execute(context)).verifyComplete();
+    StepVerifier.create(stage.execute(context))
+        .expectErrorSatisfies(error -> assertEquals("server failure", error.getMessage()))
+        .verify();
 
     verify(airportalClient).patchOrder("sid-1", "artist-1");
     verify(airportalClient).patchOrder("sid-2", "artist-2");
     verify(stateManager, times(1)).registerSuccessfulSave(first);
-    assertNotNull(context.getSaveMainOrdersResult());
-    assertEquals(1, context.getSaveMainOrdersResult().getSavedOrders().size());
-    assertEquals("sid-1", context.getSaveMainOrdersResult().getSavedOrders().get(0).getSid());
   }
 
-  /**
-   * Verifies invalid orders are skipped without calling Airportal and valid orders are still saved.
-   */
+  /** Verifies invalid orders fail the stage instead of being silently skipped. */
   @Test
-  void execute_skipsInvalidOrderAndSavesValidOnes() {
+  void execute_whenOrderInvalid_propagatesError() {
     Order invalidMissingArtist = new Order().setSid("sid-invalid");
-    Order valid = new Order().setSid("sid-valid").setArtist("artist-valid");
     FilterRecordsStageResult filterResult = new FilterRecordsStageResult();
     filterResult.addFilteredOrder(invalidMissingArtist);
-    filterResult.addFilteredOrder(valid);
-
-    when(airportalClient.patchOrder("sid-valid", "artist-valid")).thenReturn(Mono.just("ok"));
 
     OrderHunterProperties properties = new OrderHunterProperties();
     SaveMainOrdersStage stage = new SaveMainOrdersStage(airportalClient, properties);
@@ -82,11 +70,9 @@ class SaveMainOrdersStageTest {
     PollOrdersFlowContext context = PollOrdersFlowContext.begin(stateManager);
     context.setFilterRecordsResult(filterResult);
 
-    StepVerifier.create(stage.execute(context)).verifyComplete();
-
-    verify(airportalClient, times(1)).patchOrder("sid-valid", "artist-valid");
-    verify(stateManager, times(1)).registerSuccessfulSave(valid);
-    assertEquals(List.of(valid), context.getSaveMainOrdersResult().getSavedOrders());
+    StepVerifier.create(stage.execute(context))
+        .expectErrorSatisfies(error -> assertTrue(error.getMessage().contains("Invalid order")))
+        .verify();
   }
 
   /**

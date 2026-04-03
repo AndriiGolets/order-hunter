@@ -1,20 +1,19 @@
 package name.golets.order.hunter.worker.stage;
 
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.OrdersResponse;
 import name.golets.order.hunter.worker.config.CombinedOrdersPollPath;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.airportal.AirportalClient;
+import name.golets.order.hunter.worker.stage.inputs.PollRecordsStageInput;
 import name.golets.order.hunter.worker.stage.results.PollRecordsStageResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 /** Fetches {@link OrdersResponse} from the configured poll API. */
 @Component
-public class PollRecordsStage implements Stage<PollOrdersFlowContext> {
-  private static final Logger log = LoggerFactory.getLogger(PollRecordsStage.class);
+public class PollRecordsStage
+    extends AbstractStage<PollOrdersFlowContext, PollRecordsStageInput, PollRecordsStageResult> {
   private final AirportalClient airportalClient;
   private final CombinedOrdersPollPath combinedOrdersPollPath;
 
@@ -40,30 +39,35 @@ public class PollRecordsStage implements Stage<PollOrdersFlowContext> {
    * @return completion after context receives stage result
    */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
+  protected PollRecordsStageInput prepareInput(PollOrdersFlowContext context) {
+    return new PollRecordsStageInput(combinedOrdersPollPath.pathAndQuery());
+  }
+
+  @Override
+  protected Mono<PollRecordsStageResult> process(PollRecordsStageInput input) {
     return airportalClient
-        .pollOrders(combinedOrdersPollPath.pathAndQuery())
+        .pollOrders(input.getPollPathAndQuery())
         .defaultIfEmpty(new OrdersResponse())
         .map(
             response -> {
               PollRecordsStageResult result = new PollRecordsStageResult();
               result.setOrdersResponse(response);
               return result;
-            })
-        .doOnNext(
-            result -> {
-              context.setPollRecordsResult(result);
-              int recordsCount =
-                  result.getOrdersResponse() != null
-                          && result.getOrdersResponse().getRecords() != null
-                      ? result.getOrdersResponse().getRecords().size()
-                      : 0;
-              log.debug(
-                  context.getSessionMarker(),
-                  "pollRecordsStage result stored for flowRunId={} recordsCount={}",
-                  context.getFlowRunId(),
-                  recordsCount);
-            })
-        .then();
+            });
+  }
+
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, PollRecordsStageResult result) {
+    context.setPollRecordsResult(result);
+  }
+
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "pollRecordsStage";
   }
 }

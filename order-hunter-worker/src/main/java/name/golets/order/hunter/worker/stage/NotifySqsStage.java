@@ -5,16 +5,17 @@ import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.worker.event.OrderTaken;
 import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
+import name.golets.order.hunter.worker.stage.inputs.NotifySqsStageInput;
 import name.golets.order.hunter.worker.stage.results.SaveMainOrdersStageResult;
 import name.golets.order.hunter.worker.util.JsonUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
@@ -26,7 +27,9 @@ import reactor.util.retry.Retry;
  * used in a {@code Mono.then} chain.
  */
 @Component
-public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
+public class NotifySqsStage
+    extends AbstractStage<
+        PollOrdersFlowContext, NotifySqsStageInput, NotifySqsStage.NotifySqsStageResult> {
   private static final Logger log = LoggerFactory.getLogger(NotifySqsStage.class);
   private static final String EVENT_VERSION = "1.0";
   private static final int RETRY_ATTEMPTS = 3;
@@ -44,30 +47,28 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
     this.observationRegistry = observationRegistry;
   }
 
-  /**
-   * Publishes OrderTaken event based on successful save results, updates completion flags in state,
-   * and retries SQS publish failures.
-   *
-   * <p>If no orders were saved in the current flow cycle, no outbound event is sent.
-   *
-   * @param context flow session context
-   * @return completion when event is published and state is adjusted
-   */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
+  protected NotifySqsStageInput prepareInput(PollOrdersFlowContext context) {
+    SaveMainOrdersStageResult mainResult = context.getSaveMainOrdersResult();
+    List<Order> savedMainOrders = mainResult != null ? mainResult.getSavedOrders() : List.of();
+    return new NotifySqsStageInput(
+        context.getStateManager(), context.getSessionMarker(), savedMainOrders);
+  }
+
+  @Override
+  protected Mono<NotifySqsStageResult> process(NotifySqsStageInput input) {
     return Mono.deferContextual(
         contextView -> {
-          if (context.getStateManager() == null) {
-            return Mono.empty();
+          if (input.getStateManager() == null) {
+            return Mono.just(new NotifySqsStageResult(false, false, 0));
           }
-          reconcileHeadsConsistency(context);
-          OrderTaken event = buildOrderTakenEvent(context);
+          reconcileHeadsConsistency(input);
+          OrderTaken event = buildOrderTakenEvent(input);
           if (event.getSavedOrders().isEmpty()) {
             log.debug(
-                context.getSessionMarker(),
-                "notifySqsStage skipped publish for flowRunId={} because no orders were saved",
-                context.getFlowRunId());
-            return Mono.empty();
+                input.getSessionMarker(),
+                "notifySqsStage skipped publish because no orders were saved");
+            return Mono.just(new NotifySqsStageResult(false, event.isCompleted(), 0));
           }
           Observation observation =
               Observation.createNotStarted(
@@ -90,75 +91,77 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
                       .doBeforeRetry(
                           signal ->
                               log.warn(
-                                  context.getSessionMarker(),
-                                  "notifySqsStage publish retry={} flowRunId={}",
+                                  input.getSessionMarker(),
+                                  "notifySqsStage publish retry={}",
                                   signal.totalRetries() + 1,
-                                  context.getFlowRunId(),
                                   signal.failure())))
-              .doOnSuccess(ignored -> onPublished(context, event))
+              .doOnSuccess(ignored -> onPublished(input, event))
+              .thenReturn(
+                  new NotifySqsStageResult(
+                      true, event.isCompleted(), event.getSavedOrders().size()))
               .doOnError(observation::error)
               .doFinally(signalType -> observation.stop());
         });
   }
 
-  private OrderTaken buildOrderTakenEvent(PollOrdersFlowContext context) {
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, NotifySqsStageResult result) {
+    // Notify stage does not store dedicated output in flow context.
+  }
+
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "notifySqsStage";
+  }
+
+  private OrderTaken buildOrderTakenEvent(NotifySqsStageInput input) {
     OrderTaken event = new OrderTaken();
     event.setEventVersion(EVENT_VERSION);
     event.setProducedAt(Instant.now());
-    event.setSavedOrders(readSavedMainOrders(context));
+    event.setSavedOrders(input.getSavedMainOrders());
     boolean completed =
-        context.getStateManager().getHeadsTaken() >= context.getStateManager().getHeadsToTake();
+        input.getStateManager().getHeadsTaken() >= input.getStateManager().getHeadsToTake();
     event.setCompleted(completed);
     return event;
   }
 
-  private List<Order> readSavedMainOrders(PollOrdersFlowContext context) {
-    SaveMainOrdersStageResult result = context.getSaveMainOrdersResult();
-    if (result == null) {
-      return List.of();
-    }
-    return result.getSavedOrders();
-  }
-
-  private void onPublished(PollOrdersFlowContext context, OrderTaken event) {
+  private void onPublished(NotifySqsStageInput input, OrderTaken event) {
     log.info(
-        context.getSessionMarker(),
-        "notifySqsStage sent OrderTaken for flowRunId={} ordersSent={}",
-        context.getFlowRunId(),
+        input.getSessionMarker(),
+        "notifySqsStage sent OrderTaken ordersSent={}",
         event.getSavedOrders().size());
 
     if (event.isCompleted()) {
-      context.getStateManager().setStarted(false);
+      input.getStateManager().setStarted(false);
       log.info(
-          context.getSessionMarker(),
-          "notifySqsStage task completed for flowRunId={} headsTaken={} headsToTake={}",
-          context.getFlowRunId(),
-          context.getStateManager().getHeadsTaken(),
-          context.getStateManager().getHeadsToTake());
+          input.getSessionMarker(),
+          "notifySqsStage task completed headsTaken={} headsToTake={}",
+          input.getStateManager().getHeadsTaken(),
+          input.getStateManager().getHeadsToTake());
       return;
     }
     log.info(
-        context.getSessionMarker(),
-        "notifySqsStage task not completed for flowRunId={} headsTaken={} headsToTake={}",
-        context.getFlowRunId(),
-        context.getStateManager().getHeadsTaken(),
-        context.getStateManager().getHeadsToTake());
+        input.getSessionMarker(),
+        "notifySqsStage task not completed headsTaken={} headsToTake={}",
+        input.getStateManager().getHeadsTaken(),
+        input.getStateManager().getHeadsToTake());
   }
 
-  private void reconcileHeadsConsistency(PollOrdersFlowContext context) {
+  private void reconcileHeadsConsistency(NotifySqsStageInput input) {
     int headsFromSavedStages = 0;
-    SaveMainOrdersStageResult mainResult = context.getSaveMainOrdersResult();
-    if (mainResult != null) {
-      headsFromSavedStages += heads(mainResult.getSavedOrders());
-    }
+    headsFromSavedStages += heads(input.getSavedMainOrders());
 
-    int currentHeadsTaken = context.getStateManager().getHeadsTaken();
+    int currentHeadsTaken = input.getStateManager().getHeadsTaken();
     if (headsFromSavedStages > currentHeadsTaken) {
-      context.getStateManager().setHeadsTaken(headsFromSavedStages);
+      input.getStateManager().setHeadsTaken(headsFromSavedStages);
       log.warn(
-          context.getSessionMarker(),
-          "notifySqsStage reconciled headsTaken for flowRunId={} from {} to {}",
-          context.getFlowRunId(),
+          input.getSessionMarker(),
+          "notifySqsStage reconciled headsTaken from {} to {}",
           currentHeadsTaken,
           headsFromSavedStages);
     }
@@ -169,5 +172,12 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
       return 0;
     }
     return orders.stream().mapToInt(order -> Math.max(0, order.getHeads())).sum();
+  }
+
+  record NotifySqsStageResult(boolean published, boolean completed, int ordersSent) {
+    @Override
+    public String toString() {
+      return JsonUtil.toOneLineJson(this);
+    }
   }
 }

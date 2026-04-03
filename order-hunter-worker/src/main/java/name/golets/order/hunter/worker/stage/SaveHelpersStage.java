@@ -4,17 +4,19 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
 import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.airportal.AirportalClient;
+import name.golets.order.hunter.worker.stage.inputs.SaveHelpersStageInput;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
+import name.golets.order.hunter.worker.stage.results.ParseOrdersStageResult;
 import name.golets.order.hunter.worker.stage.results.SaveHelpersStageResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -25,7 +27,8 @@ import reactor.core.publisher.Mono;
  * <p>{@link #execute} uses {@link Mono#defer} for the same reason as {@link SaveMainOrdersStage}.
  */
 @Component
-public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
+public class SaveHelpersStage
+    extends AbstractStage<PollOrdersFlowContext, SaveHelpersStageInput, SaveHelpersStageResult> {
   private static final Logger log = LoggerFactory.getLogger(SaveHelpersStage.class);
   private final AirportalClient airportalClient;
   private final int maxParallelOrdersToSaveThreads;
@@ -42,50 +45,51 @@ public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
         Math.max(1, properties.getMaxParallelOrdersToSaveThreads());
   }
 
-  /**
-   * Saves helper orders related to filtered main orders in parallel, isolates per-branch failures,
-   * and keeps successful saves in result/state.
-   *
-   * @param context flow session context
-   * @return completion after all helper save branches complete
-   */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
-    return Mono.defer(
-        () -> {
-          SaveHelpersStageResult result = new SaveHelpersStageResult();
-          context.setSaveHelpersResult(result);
+  protected SaveHelpersStageInput prepareInput(PollOrdersFlowContext context) {
+    ParseOrdersStageResult parseResult = context.getParseOrdersResult();
+    ParsedOrders parsedOrders = parseResult != null ? parseResult.getParsedOrders() : null;
+    List<Order> helperOrdersToSave =
+        resolveHelpersToSave(context.getFilterRecordsResult(), parsedOrders);
+    return new SaveHelpersStageInput(
+        context.getStateManager(), context.getSessionMarker(), helperOrdersToSave);
+  }
 
-          if (context.getStateManager() == null) {
-            return Mono.empty();
-          }
-          List<Order> helperOrdersToSave = resolveHelpersToSave(context);
-          if (helperOrdersToSave.isEmpty()) {
-            log.debug(
-                context.getSessionMarker(),
-                "saveHelpersStage result stored for flowRunId={} savedCount=0",
-                context.getFlowRunId());
-            return Mono.empty();
-          }
+  @Override
+  protected Mono<SaveHelpersStageResult> process(SaveHelpersStageInput input) {
+    SaveHelpersStageResult result = new SaveHelpersStageResult();
+    if (input.getStateManager() == null || input.getHelperOrdersToSave().isEmpty()) {
+      return Mono.just(result);
+    }
+    return Flux.fromIterable(input.getHelperOrdersToSave())
+        .flatMap(order -> saveOneHelperOrder(input, result, order), maxParallelOrdersToSaveThreads)
+        .then(Mono.just(result));
+  }
 
-          return Flux.fromIterable(helperOrdersToSave)
-              .flatMap(
-                  order -> saveOneHelperOrder(context, result, order),
-                  maxParallelOrdersToSaveThreads)
-              .then(Mono.fromRunnable(() -> logResult(context, result)));
-        });
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, SaveHelpersStageResult result) {
+    context.setSaveHelpersResult(result);
+  }
+
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "saveHelpersStage";
   }
 
   private Mono<Void> saveOneHelperOrder(
-      PollOrdersFlowContext context, SaveHelpersStageResult result, Order order) {
+      SaveHelpersStageInput input, SaveHelpersStageResult result, Order order) {
     if (order == null || order.getSid() == null || order.getArtist() == null) {
-      log.error(
-          context.getSessionMarker(),
-          "saveHelpersStage skipped invalid helper for flowRunId={} helperSid={} artistSid={}",
-          context.getFlowRunId(),
-          order != null ? order.getSid() : null,
-          order != null ? order.getArtist() : null);
-      return Mono.empty();
+      return Mono.error(
+          new IllegalStateException(
+              "Invalid helper in saveHelpersStage helperSid="
+                  + (order != null ? order.getSid() : null)
+                  + " artistSid="
+                  + (order != null ? order.getArtist() : null)));
     }
 
     return airportalClient
@@ -100,40 +104,33 @@ public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
         .doOnNext(
             responseBody -> {
               result.addSavedOrder(order);
-              context.getStateManager().registerSuccessfulSave(order);
+              input.getStateManager().registerSuccessfulSave(order);
               log.debug(
-                  context.getSessionMarker(),
-                  "saveHelpersStage saved helper for flowRunId={} helperSid={} responseLength={}",
-                  context.getFlowRunId(),
+                  input.getSessionMarker(),
+                  "saveHelpersStage saved helper helperSid={} responseLength={}",
                   order.getSid(),
                   responseBody != null ? responseBody.length() : 0);
             })
-        .then()
-        .onErrorResume(
-            error -> {
-              log.error(
-                  context.getSessionMarker(),
-                  "saveHelpersStage failed for flowRunId={} helperSid={}",
-                  context.getFlowRunId(),
-                  order.getSid(),
-                  error);
-              return Mono.empty();
-            });
+        .doOnError(
+            error ->
+                log.error(
+                    input.getSessionMarker(),
+                    "saveHelpersStage failed helperSid={}",
+                    order.getSid(),
+                    error))
+        .then();
   }
 
   private static String sanitizeProductTitle(String productTitle) {
     return productTitle != null && !productTitle.isBlank() ? productTitle : "unknown";
   }
 
-  private List<Order> resolveHelpersToSave(PollOrdersFlowContext context) {
-    FilterRecordsStageResult filterResult = context.getFilterRecordsResult();
-    if (filterResult == null
-        || context.getParseOrdersResult() == null
-        || context.getParseOrdersResult().getParsedOrders() == null) {
+  private List<Order> resolveHelpersToSave(
+      FilterRecordsStageResult filterResult, ParsedOrders parsedOrders) {
+    if (filterResult == null || parsedOrders == null) {
       return List.of();
     }
 
-    ParsedOrders parsedOrders = context.getParseOrdersResult().getParsedOrders();
     Map<String, Map<String, Order>> helpersByMainKey = parsedOrders.getOrdersHelperMapByName();
     if (helpersByMainKey == null || helpersByMainKey.isEmpty()) {
       return List.of();
@@ -159,13 +156,5 @@ public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
       return;
     }
     dedupBySid.putIfAbsent(helper.getSid(), helper);
-  }
-
-  private void logResult(PollOrdersFlowContext context, SaveHelpersStageResult result) {
-    log.debug(
-        context.getSessionMarker(),
-        "saveHelpersStage result stored for flowRunId={} savedCount={}",
-        context.getFlowRunId(),
-        result.getSavedOrders().size());
   }
 }

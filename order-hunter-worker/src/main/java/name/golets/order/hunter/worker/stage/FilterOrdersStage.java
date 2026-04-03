@@ -7,13 +7,13 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import name.golets.order.hunter.common.enums.OrderType;
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.common.model.Order;
-import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
+import name.golets.order.hunter.worker.stage.inputs.FilterOrdersStageInput;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import name.golets.order.hunter.worker.stage.results.ParseOrdersStageResult;
+import name.golets.order.hunter.worker.state.WorkerStateManager;
+import org.slf4j.Marker;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
@@ -21,8 +21,8 @@ import reactor.core.publisher.Mono;
  * Filters parsed main orders by business rules and selects minimum subset to satisfy head target.
  */
 @Component
-public class FilterOrdersStage implements Stage<PollOrdersFlowContext> {
-  private static final Logger log = LoggerFactory.getLogger(FilterOrdersStage.class);
+public class FilterOrdersStage
+    extends AbstractStage<PollOrdersFlowContext, FilterOrdersStageInput, FilterRecordsStageResult> {
 
   /**
    * Filters only {@code parsedOrders.ordersMapBySid} entries by allowed order types and already
@@ -32,47 +32,57 @@ public class FilterOrdersStage implements Stage<PollOrdersFlowContext> {
    * @return completion after filtered result is written into context
    */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
-    return Mono.fromRunnable(
+  protected FilterOrdersStageInput prepareInput(PollOrdersFlowContext context) {
+    ParseOrdersStageResult parseResult = context.getParseOrdersResult();
+    return new FilterOrdersStageInput(
+        context.getStateManager(), parseResult != null ? parseResult.getParsedOrders() : null);
+  }
+
+  @Override
+  protected Mono<FilterRecordsStageResult> process(FilterOrdersStageInput input) {
+    return Mono.fromSupplier(
         () -> {
           FilterRecordsStageResult result = new FilterRecordsStageResult();
-          if (!isContextReady(context)) {
-            context.setFilterRecordsResult(result);
-            return;
+          if (!isContextReady(input)) {
+            return result;
           }
 
-          List<Order> candidateOrders = collectCandidates(context);
-          int targetHeads = resolveTargetHeads(context);
+          List<Order> candidateOrders = collectCandidates(input);
+          int targetHeads = resolveTargetHeads(input.getStateManager());
           List<Order> selectedOrders = selectOrdersForTarget(candidateOrders, targetHeads);
           selectedOrders.forEach(result::addFilteredOrder);
-          int collectedHeads = countHeads(selectedOrders);
-
-          context.setFilterRecordsResult(result);
-          log.debug(
-              context.getSessionMarker(),
-              "filterOrdersStage result stored for flowRunId={} selectedCount={} selectedHeads={}",
-              context.getFlowRunId(),
-              result.getFilteredOrders().size(),
-              collectedHeads);
+          return result;
         });
   }
 
-  private static boolean isContextReady(PollOrdersFlowContext context) {
-    return context.getStateManager() != null
-        && context.getParseOrdersResult() != null
-        && context.getParseOrdersResult().getParsedOrders() != null;
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, FilterRecordsStageResult result) {
+    context.setFilterRecordsResult(result);
   }
 
-  private static List<Order> collectCandidates(PollOrdersFlowContext context) {
-    ParsedOrders parsedOrders = context.getParseOrdersResult().getParsedOrders();
-    Set<String> savedSids = context.getStateManager().getSavedOrderSids();
-    Set<OrderType> allowedTypes = resolveAllowedTypes(context);
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "filterOrdersStage";
+  }
+
+  private static boolean isContextReady(FilterOrdersStageInput input) {
+    return input.getStateManager() != null && input.getParsedOrders() != null;
+  }
+
+  private static List<Order> collectCandidates(FilterOrdersStageInput input) {
+    Set<String> savedSids = input.getStateManager().getSavedOrderSids();
+    Set<OrderType> allowedTypes = resolveAllowedTypes(input.getStateManager());
     Comparator<Order> byHeadsDescThenSid =
         Comparator.comparingInt(Order::getHeads)
             .reversed()
             .thenComparing(Order::getSid, Comparator.nullsLast(String::compareTo));
 
-    return parsedOrders.getOrdersMapBySid().values().stream()
+    return input.getParsedOrders().getOrdersMapBySid().values().stream()
         .filter(order -> order != null && order.getSid() != null)
         .filter(order -> !savedSids.contains(order.getSid()))
         .filter(order -> allowedTypes.contains(order.getOrderType()))
@@ -80,8 +90,8 @@ public class FilterOrdersStage implements Stage<PollOrdersFlowContext> {
         .collect(Collectors.toList());
   }
 
-  private static int resolveTargetHeads(PollOrdersFlowContext context) {
-    return Math.max(0, context.getStateManager().getHeadsToTake());
+  private static int resolveTargetHeads(WorkerStateManager stateManager) {
+    return Math.max(0, stateManager.getHeadsToTake());
   }
 
   private static List<Order> selectOrdersForTarget(List<Order> candidateOrders, int targetHeads) {
@@ -100,14 +110,10 @@ public class FilterOrdersStage implements Stage<PollOrdersFlowContext> {
     return selectedOrders;
   }
 
-  private static int countHeads(List<Order> selectedOrders) {
-    return selectedOrders.stream().mapToInt(order -> Math.max(0, order.getHeads())).sum();
-  }
-
-  private static Set<OrderType> resolveAllowedTypes(PollOrdersFlowContext context) {
-    if (context.getStateManager().getOrderTypes().isEmpty()) {
+  private static Set<OrderType> resolveAllowedTypes(WorkerStateManager stateManager) {
+    if (stateManager.getOrderTypes().isEmpty()) {
       return EnumSet.allOf(OrderType.class);
     }
-    return EnumSet.copyOf(context.getStateManager().getOrderTypes());
+    return EnumSet.copyOf(stateManager.getOrderTypes());
   }
 }

@@ -15,7 +15,7 @@ order-hunter:
 logging:
   level:
     root: WARN
-    name.golets.order.hunter.worker: INFO
+    name.golets.order.hunter.worker: DEBUG
 
 management:
   otlp:

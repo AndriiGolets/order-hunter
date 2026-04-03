@@ -4,13 +4,13 @@ import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
-import name.golets.order.hunter.common.flow.Stage;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import name.golets.order.hunter.worker.flow.FlowObservationContextKeys;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
+import name.golets.order.hunter.worker.stage.inputs.BetweenPollsDelayStageInput;
 import name.golets.order.hunter.worker.stage.results.FilterRecordsStageResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import name.golets.order.hunter.worker.util.JsonUtil;
+import org.slf4j.Marker;
 import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
@@ -22,8 +22,11 @@ import reactor.core.publisher.Mono;
  * least one order was selected, delay is skipped and no observation span is created.
  */
 @Component
-public class BetweenPollsDelayStage implements Stage<PollOrdersFlowContext> {
-  private static final Logger log = LoggerFactory.getLogger(BetweenPollsDelayStage.class);
+public class BetweenPollsDelayStage
+    extends AbstractStage<
+        PollOrdersFlowContext,
+        BetweenPollsDelayStageInput,
+        BetweenPollsDelayStage.BetweenPollsDelayStageResult> {
   private static final String SPAN_NAME = "order-hunter.flow.betweenPollsDelay";
 
   private final int betweenPollsJitterMax;
@@ -44,56 +47,59 @@ public class BetweenPollsDelayStage implements Stage<PollOrdersFlowContext> {
     this.observationRegistryFactory = observationRegistryFactory;
   }
 
-  /**
-   * Applies delay when current cycle has no filtered orders.
-   *
-   * @param context flow session context
-   * @return completion after delay, or immediate completion when skipped
-   */
   @Override
-  public Mono<Void> execute(PollOrdersFlowContext context) {
-    return Mono.deferContextual(
-            contextView -> {
-              int filteredOrdersCount = countSavedOrders(context);
-              if (filteredOrdersCount > 0) {
-                return Mono.empty();
-              }
-
-              int delayMillis = computeDelayMillis();
-              if (delayMillis <= 0) {
-                return Mono.empty();
-              }
-
-              ObservationRegistry observationRegistry = observationRegistryFactory.getObject();
-              Observation observation =
-                  Observation.createNotStarted(SPAN_NAME, observationRegistry)
-                      .lowCardinalityKeyValue("stage", "betweenPollsDelay")
-                      .lowCardinalityKeyValue("delay.millis", Integer.toString(delayMillis));
-              if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
-                Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
-                if (parent instanceof Observation parentObservation) {
-                  observation.parentObservation(parentObservation);
-                }
-              }
-              observation.start();
-              return Mono.delay(Duration.ofMillis(delayMillis))
-                  .then()
-                  .doOnError(observation::error)
-                  .doFinally(signalType -> observation.stop());
-            })
-        .onErrorResume(
-            error -> {
-              log.error(
-                  context.getSessionMarker(),
-                  "Internal server error while applying between polls delay for flowRunId={}",
-                  context.getFlowRunId(),
-                  error);
-              return Mono.empty();
-            });
+  protected BetweenPollsDelayStageInput prepareInput(PollOrdersFlowContext context) {
+    return new BetweenPollsDelayStageInput(countSavedOrders(context.getFilterRecordsResult()));
   }
 
-  private int countSavedOrders(PollOrdersFlowContext context) {
-    FilterRecordsStageResult filterResult = context.getFilterRecordsResult();
+  @Override
+  protected Mono<BetweenPollsDelayStageResult> process(BetweenPollsDelayStageInput input) {
+    return Mono.deferContextual(
+        contextView -> {
+          if (input.getFilteredOrdersCount() > 0) {
+            return Mono.just(new BetweenPollsDelayStageResult(false, 0));
+          }
+
+          int delayMillis = computeDelayMillis();
+          if (delayMillis <= 0) {
+            return Mono.just(new BetweenPollsDelayStageResult(false, 0));
+          }
+
+          ObservationRegistry observationRegistry = observationRegistryFactory.getObject();
+          Observation observation =
+              Observation.createNotStarted(SPAN_NAME, observationRegistry)
+                  .lowCardinalityKeyValue("stage", "betweenPollsDelay")
+                  .lowCardinalityKeyValue("delay.millis", Integer.toString(delayMillis));
+          if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
+            Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
+            if (parent instanceof Observation parentObservation) {
+              observation.parentObservation(parentObservation);
+            }
+          }
+          observation.start();
+          return Mono.delay(Duration.ofMillis(delayMillis))
+              .thenReturn(new BetweenPollsDelayStageResult(true, delayMillis))
+              .doOnError(observation::error)
+              .doFinally(signalType -> observation.stop());
+        });
+  }
+
+  @Override
+  protected void storeResult(PollOrdersFlowContext context, BetweenPollsDelayStageResult result) {
+    // Delay stage has no context output.
+  }
+
+  @Override
+  protected Marker marker(PollOrdersFlowContext context) {
+    return context.getSessionMarker();
+  }
+
+  @Override
+  protected String stageName() {
+    return "betweenPollsDelayStage";
+  }
+
+  private int countSavedOrders(FilterRecordsStageResult filterResult) {
     if (filterResult == null) {
       return 0;
     }
@@ -108,5 +114,12 @@ public class BetweenPollsDelayStage implements Stage<PollOrdersFlowContext> {
       return betweenPollsJitterMax;
     }
     return ThreadLocalRandom.current().nextInt(0, betweenPollsJitterMax + 1);
+  }
+
+  record BetweenPollsDelayStageResult(boolean delayApplied, int delayMillis) {
+    @Override
+    public String toString() {
+      return JsonUtil.toOneLineJson(this);
+    }
   }
 }
