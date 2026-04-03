@@ -1,12 +1,7 @@
 package name.golets.order.hunter.worker.integration.airportal;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.micrometer.observation.Observation;
-import io.micrometer.observation.ObservationRegistry;
 import java.util.Map;
 import name.golets.order.hunter.common.model.OrdersResponse;
-import name.golets.order.hunter.common.model.ResultInfo;
 import name.golets.order.hunter.worker.config.OrderHunterInfrastructureConfiguration;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import name.golets.order.hunter.worker.error.WebClientError;
@@ -25,11 +20,8 @@ import reactor.util.context.ContextView;
  */
 @Component
 public class ObservedAirportalClient implements AirportalClient {
-  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
   private final WebClient pollWebClient;
   private final WebClient saveWebClient;
-  private final ObservationRegistry observationRegistry;
   private final String saveArtistNamePath;
 
   /**
@@ -37,7 +29,6 @@ public class ObservedAirportalClient implements AirportalClient {
    *
    * @param pollWebClient client configured with polling timeout
    * @param saveWebClient client configured with saving timeout
-   * @param observationRegistry registry used to record operation observations
    * @param properties worker configuration values
    */
   public ObservedAirportalClient(
@@ -45,44 +36,24 @@ public class ObservedAirportalClient implements AirportalClient {
           WebClient pollWebClient,
       @Qualifier(OrderHunterInfrastructureConfiguration.AIRPORTAL_SAVE_WEB_CLIENT)
           WebClient saveWebClient,
-      ObservationRegistry observationRegistry,
       OrderHunterProperties properties) {
     this.pollWebClient = pollWebClient;
     this.saveWebClient = saveWebClient;
-    this.observationRegistry = observationRegistry;
     this.saveArtistNamePath = normalizeSavePathPrefix(properties.getSaveArtistNamePath());
   }
 
   @Override
   public Mono<OrdersResponse> pollOrders(String pathAndQuery) {
-    return Mono.deferContextual(
-        contextView -> {
-          Observation observation =
-              applyParentFlowObservation(
-                      Observation.createNotStarted(
-                              "order-hunter.airportal.poll", observationRegistry)
-                          .lowCardinalityKeyValue("operation", "poll"),
-                      contextView)
-                  .start();
-
-          return pollWebClient
-              .get()
-              .uri(pathAndQuery)
-              .retrieve()
-              .onStatus(
-                  HttpStatusCode::isError, response -> mapErrorResponse(response, pathAndQuery))
-              .bodyToMono(OrdersResponse.class)
-              .defaultIfEmpty(new OrdersResponse())
-              .doOnNext(
-                  response ->
-                      observation.lowCardinalityKeyValue(
-                          "resultInfo.totalResults", extractTotalResults(response)))
-              .onErrorMap(
-                  WebClientRequestException.class,
-                  error -> WebClientError.fromRequestException(error, pathAndQuery))
-              .doOnError(observation::error)
-              .doFinally(signalType -> observation.stop());
-        });
+    return pollWebClient
+        .get()
+        .uri(pathAndQuery)
+        .retrieve()
+        .onStatus(HttpStatusCode::isError, response -> mapErrorResponse(response, pathAndQuery))
+        .bodyToMono(OrdersResponse.class)
+        .defaultIfEmpty(new OrdersResponse())
+        .onErrorMap(
+            WebClientRequestException.class,
+            error -> WebClientError.fromRequestException(error, pathAndQuery));
   }
 
   @Override
@@ -91,43 +62,25 @@ public class ObservedAirportalClient implements AirportalClient {
     Object requestBody = buildAssignArtistBody(artistSid);
     return Mono.deferContextual(
         contextView -> {
-          String spanName =
-              readContextOrDefault(
-                  contextView,
-                  FlowObservationContextKeys.SAVE_SPAN_NAME,
-                  "order-hunter.airportal.save");
           String orderKind =
               readContextOrDefault(
                   contextView, FlowObservationContextKeys.SAVE_ORDER_KIND, "unknown");
           String productTitle =
               readContextOrDefault(
                   contextView, FlowObservationContextKeys.SAVE_PRODUCT_TITLE, "unknown");
-          Observation observation =
-              applyParentFlowObservation(
-                      Observation.createNotStarted(spanName, observationRegistry)
-                          .lowCardinalityKeyValue("operation", "patchSave")
-                          .lowCardinalityKeyValue("order.kind", orderKind)
-                          .highCardinalityKeyValue("order.productTitle", productTitle)
-                          .highCardinalityKeyValue("request.body", toJson(requestBody)),
-                      contextView)
-                  .start();
-
           return saveWebClient
               .patch()
               .uri(path)
+              .attribute(FlowObservationContextKeys.SAVE_ORDER_KIND, orderKind)
+              .attribute(FlowObservationContextKeys.SAVE_PRODUCT_TITLE, productTitle)
               .bodyValue(requestBody)
               .retrieve()
               .onStatus(HttpStatusCode::isError, response -> mapErrorResponse(response, path))
               .bodyToMono(String.class)
               .defaultIfEmpty("")
-              .doOnNext(
-                  responseBody ->
-                      observation.highCardinalityKeyValue("response.body", responseBody))
               .onErrorMap(
                   WebClientRequestException.class,
-                  error -> WebClientError.fromRequestException(error, path))
-              .doOnError(observation::error)
-              .doFinally(signalType -> observation.stop());
+                  error -> WebClientError.fromRequestException(error, path));
         });
   }
 
@@ -137,25 +90,6 @@ public class ObservedAirportalClient implements AirportalClient {
 
   Object buildAssignArtistBody(String artistSid) {
     return Map.of("orders_v3_2__artist", artistSid);
-  }
-
-  private static String extractTotalResults(OrdersResponse response) {
-    if (response == null) {
-      return "0";
-    }
-    ResultInfo info = response.getResultInfo();
-    if (info == null || info.getTotalResults() == null) {
-      return "0";
-    }
-    return String.valueOf(info.getTotalResults());
-  }
-
-  private String toJson(Object body) {
-    try {
-      return OBJECT_MAPPER.writeValueAsString(body);
-    } catch (JsonProcessingException e) {
-      return String.valueOf(body);
-    }
   }
 
   private static String normalizeSavePathPrefix(String rawPath) {
@@ -174,16 +108,6 @@ public class ObservedAirportalClient implements AirportalClient {
         .bodyToMono(String.class)
         .defaultIfEmpty("")
         .map(body -> WebClientError.fromResponse(response.statusCode().value(), body, errorUrl));
-  }
-
-  private Observation applyParentFlowObservation(Observation observation, ContextView contextView) {
-    if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
-      Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
-      if (parent instanceof Observation parentObservation) {
-        return observation.parentObservation(parentObservation);
-      }
-    }
-    return observation;
   }
 
   private String readContextOrDefault(ContextView contextView, String key, String defaultValue) {

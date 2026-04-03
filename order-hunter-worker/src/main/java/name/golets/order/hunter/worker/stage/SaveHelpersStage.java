@@ -93,9 +93,6 @@ public class SaveHelpersStage implements Stage<PollOrdersFlowContext> {
         .contextWrite(
             reactorContext ->
                 reactorContext
-                    .put(
-                        FlowObservationContextKeys.SAVE_SPAN_NAME,
-                        "order-hunter.airportal.save.helper")
                     .put(FlowObservationContextKeys.SAVE_ORDER_KIND, "helper")
                     .put(
                         FlowObservationContextKeys.SAVE_PRODUCT_TITLE,

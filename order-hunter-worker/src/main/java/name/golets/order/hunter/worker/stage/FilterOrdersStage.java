@@ -21,8 +21,8 @@ import reactor.core.publisher.Mono;
  * Filters parsed main orders by business rules and selects minimum subset to satisfy head target.
  */
 @Component
-public class FilterRecordsStage implements Stage<PollOrdersFlowContext> {
-  private static final Logger log = LoggerFactory.getLogger(FilterRecordsStage.class);
+public class FilterOrdersStage implements Stage<PollOrdersFlowContext> {
+  private static final Logger log = LoggerFactory.getLogger(FilterOrdersStage.class);
 
   /**
    * Filters only {@code parsedOrders.ordersMapBySid} entries by allowed order types and already
@@ -50,7 +50,7 @@ public class FilterRecordsStage implements Stage<PollOrdersFlowContext> {
           context.setFilterRecordsResult(result);
           log.debug(
               context.getSessionMarker(),
-              "filterRecordsStage result stored for flowRunId={} selectedCount={} selectedHeads={}",
+              "filterOrdersStage result stored for flowRunId={} selectedCount={} selectedHeads={}",
               context.getFlowRunId(),
               result.getFilteredOrders().size(),
               collectedHeads);

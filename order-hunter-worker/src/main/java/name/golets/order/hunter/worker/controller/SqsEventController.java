@@ -1,5 +1,7 @@
 package name.golets.order.hunter.worker.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import name.golets.order.hunter.worker.event.StartEvent;
@@ -16,6 +18,7 @@ import reactor.core.publisher.Mono;
  */
 @Component
 public class SqsEventController {
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private final WorkerStateManager workerStateManager;
   private final ObservationRegistry observationRegistry;
@@ -35,6 +38,8 @@ public class SqsEventController {
   public Mono<Void> onStart(StartEvent event) {
     return observe(
         "order-hunter.sqs.command.start",
+        "startEvent",
+        toJson(event),
         Mono.fromRunnable(
             () -> {
               workerStateManager.setStarted(true);
@@ -67,13 +72,30 @@ public class SqsEventController {
   }
 
   private <T> Mono<T> observe(String observationName, Mono<T> publisher) {
+    return observe(observationName, null, null, publisher);
+  }
+
+  private <T> Mono<T> observe(
+      String observationName, String tagName, String tagValue, Mono<T> publisher) {
     return Mono.defer(
         () -> {
           Observation observation =
-              Observation.createNotStarted(observationName, observationRegistry).start();
+              Observation.createNotStarted(observationName, observationRegistry);
+          if (tagName != null && tagValue != null) {
+            observation.highCardinalityKeyValue(tagName, tagValue);
+          }
+          observation.start();
           return publisher
               .doOnError(observation::error)
               .doFinally(signalType -> observation.stop());
         });
+  }
+
+  private static String toJson(StartEvent event) {
+    try {
+      return OBJECT_MAPPER.writeValueAsString(event);
+    } catch (JsonProcessingException e) {
+      return "{}";
+    }
   }
 }

@@ -31,7 +31,7 @@ import name.golets.order.hunter.worker.event.StopEvent;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
 import name.golets.order.hunter.worker.integration.support.AirportalMockDispatcher;
-import name.golets.order.hunter.worker.stage.FilterRecordsStage;
+import name.golets.order.hunter.worker.stage.FilterOrdersStage;
 import name.golets.order.hunter.worker.stage.results.ParseOrdersStageResult;
 import name.golets.order.hunter.worker.starter.WorkerStarter;
 import name.golets.order.hunter.worker.state.DefaultWorkerStateManager;
@@ -463,7 +463,7 @@ class OrderHunterIntegrationTest {
         state.setOrderTypes(List.of(OrderType.NORMAL));
         PollOrdersFlowContext context = PollOrdersFlowContext.begin(state);
         context.setParseOrdersResult(parseResult);
-        FilterRecordsStage filter = new FilterRecordsStage();
+        FilterOrdersStage filter = new FilterOrdersStage();
         StepVerifier.create(filter.execute(context)).verifyComplete();
         List<String> sids =
             context.getFilterRecordsResult().getFilteredOrders().stream()

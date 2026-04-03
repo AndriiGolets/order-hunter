@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.tck.TestObservationRegistry;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import name.golets.order.hunter.common.model.Order;
@@ -50,7 +52,8 @@ class NotifySqsStageTest {
     context.setSaveMainOrdersResult(saveMain);
 
     when(orderTakenSqsPublisher.publish(any())).thenReturn(Mono.empty());
-    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher, ObservationRegistry.create());
+    TestObservationRegistry observationRegistry = TestObservationRegistry.create();
+    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher, observationRegistry);
 
     StepVerifier.create(stage.execute(context)).verifyComplete();
 
@@ -62,6 +65,7 @@ class NotifySqsStageTest {
     assertTrue(sent.isCompleted());
     assertEquals(List.of(savedMain), sent.getSavedOrders());
     assertFalse(state.isStarted());
+    observationRegistry.assertThat().hasAnObservationWithAKeyName("orderTaken");
   }
 
   /**
@@ -97,5 +101,25 @@ class NotifySqsStageTest {
     assertTrue(state.isStarted());
     assertEquals(3, state.getHeadsTaken());
     assertEquals(2, attempts.get());
+  }
+
+  /** Verifies no outbound SQS event is sent when the cycle saved zero orders. */
+  @Test
+  void execute_noSavedOrdersSkipsPublish() {
+    DefaultWorkerStateManager state = new DefaultWorkerStateManager();
+    state.setStarted(true);
+    state.setHeadsToTake(10);
+    state.setHeadsTaken(0);
+    PollOrdersFlowContext context = PollOrdersFlowContext.begin(state);
+    context.setSaveMainOrdersResult(new SaveMainOrdersStageResult());
+    context.setSaveHelpersResult(new SaveHelpersStageResult());
+
+    NotifySqsStage stage = new NotifySqsStage(orderTakenSqsPublisher, ObservationRegistry.create());
+
+    StepVerifier.create(stage.execute(context)).verifyComplete();
+
+    verify(orderTakenSqsPublisher, never()).publish(any());
+    assertTrue(state.isStarted());
+    assertEquals(0, state.getHeadsTaken());
   }
 }

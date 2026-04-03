@@ -15,12 +15,12 @@ import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
 /** Unit tests for filtering parsed orders by remaining heads, preference, and dedup rules. */
-class FilterRecordsStageTest {
+class FilterOrdersStageTest {
 
   /** Verifies higher-head main orders are selected first and may overshoot remaining heads. */
   @Test
   void execute_prefersHigherHeadsEvenWhenOvershootingTarget() {
-    final FilterRecordsStage stage = new FilterRecordsStage();
+    final FilterOrdersStage stage = new FilterOrdersStage();
     final DefaultWorkerStateManager state = new DefaultWorkerStateManager();
     state.setHeadsToTake(1);
     state.setHeadsTaken(0);
@@ -44,7 +44,7 @@ class FilterRecordsStageTest {
   /** Verifies filtering by saved SIDs and selected order types against main orders map only. */
   @Test
   void execute_filtersBySavedSidsAndAllowedTypes() {
-    final FilterRecordsStage stage = new FilterRecordsStage();
+    final FilterOrdersStage stage = new FilterOrdersStage();
     final DefaultWorkerStateManager state = new DefaultWorkerStateManager();
     state.setHeadsToTake(6);
     state.setHeadsTaken(0);
@@ -84,7 +84,7 @@ class FilterRecordsStageTest {
   /** Verifies collector keeps selecting sorted orders until head target is reached or exceeded. */
   @Test
   void execute_collectsOrdersUntilTargetReached() {
-    final FilterRecordsStage stage = new FilterRecordsStage();
+    final FilterOrdersStage stage = new FilterOrdersStage();
     final DefaultWorkerStateManager state = new DefaultWorkerStateManager();
     state.setHeadsToTake(6);
     state.setHeadsTaken(0);
@@ -104,6 +104,23 @@ class FilterRecordsStageTest {
     assertEquals(2, context.getFilterRecordsResult().getFilteredOrders().size());
     assertEquals("order-5", context.getFilterRecordsResult().getFilteredOrders().get(0).getSid());
     assertEquals("order-3", context.getFilterRecordsResult().getFilteredOrders().get(1).getSid());
+  }
+
+  /** Verifies stage keeps empty result when no parsed main orders are present. */
+  @Test
+  void execute_keepsEmptyFilterResultWhenNoOrdersAreSelected() {
+    final FilterOrdersStage stage = new FilterOrdersStage();
+    final DefaultWorkerStateManager state = new DefaultWorkerStateManager();
+    state.setHeadsToTake(2);
+    state.setHeadsTaken(0);
+    final PollOrdersFlowContext context = PollOrdersFlowContext.begin(state);
+    ParseOrdersStageResult parse = new ParseOrdersStageResult();
+    parse.setParsedOrders(new ParsedOrders());
+    context.setParseOrdersResult(parse);
+
+    StepVerifier.create(stage.execute(context)).verifyComplete();
+
+    assertEquals(0, context.getFilterRecordsResult().getFilteredOrders().size());
   }
 
   private static Order main(String sid, String name, int heads) {

@@ -29,7 +29,7 @@ import name.golets.order.hunter.worker.event.StopEvent;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
 import name.golets.order.hunter.worker.integration.sqs.OrderTakenSqsPublisher;
 import name.golets.order.hunter.worker.integration.support.AirportalMockDispatcher;
-import name.golets.order.hunter.worker.stage.FilterRecordsStage;
+import name.golets.order.hunter.worker.stage.FilterOrdersStage;
 import name.golets.order.hunter.worker.stage.results.ParseOrdersStageResult;
 import name.golets.order.hunter.worker.starter.WorkerStarter;
 import name.golets.order.hunter.worker.state.DefaultWorkerStateManager;
@@ -63,13 +63,10 @@ class TracingIntegrationTest {
   private static final String JAEGER_TRACES_ENDPOINT =
       "http://localhost:16686/api/traces?service=order-hunter-worker&limit=20";
   private static final String FLOW_CYCLE_SPAN_NAME = "order-hunter.flow.cycle";
-  private static final String AIRPORTAL_POLL_SPAN_NAME = "order-hunter.airportal.poll";
-  private static final String AIRPORTAL_MAIN_SAVE_SPAN_NAME = "order-hunter.airportal.save.main";
-  private static final String AIRPORTAL_HELPER_SAVE_SPAN_NAME =
-      "order-hunter.airportal.save.helper";
   private static final String SQS_START_SPAN_NAME = "order-hunter.sqs.command.start";
   private static final String SQS_STOP_SPAN_NAME = "order-hunter.sqs.command.stop";
   private static final String SQS_PUBLISH_SPAN_NAME = "order-hunter.sqs.publish.orderTaken";
+  private static final String STATISTICS_SPAN_NAME = "order-hunter.flow.statistics";
   private static final Duration JAEGER_STARTUP_TIMEOUT = Duration.ofSeconds(30);
   private static final String TWO_HEAD_ORDER_SID = "ov2_recLQ1ExOBR4FuUjm";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -144,9 +141,31 @@ class TracingIntegrationTest {
 
     sqsEventController.onStop(new StopEvent()).block(Duration.ofSeconds(5));
 
-    await().atMost(45, SECONDS).until(() -> hasFlowCycleTraceHierarchy() && hasSqsCommandSpans());
-    assertThat(hasFlowCycleTraceHierarchy())
-        .as("Jaeger API should show flow root with airportal child spans")
+    await()
+        .atMost(45, SECONDS)
+        .until(
+            () ->
+                hasFlowCycleSpan()
+                    && hasOrderKindTagValue("main")
+                    && hasOrderKindTagValue("helper")
+                    && hasClientUrlTag()
+                    && hasStatisticsStageSpan()
+                    && hasWebClientServerErrorTag());
+    assertThat(hasFlowCycleSpan()).as("Jaeger API should show flow root span").isTrue();
+    assertThat(hasOrderKindTagValue("main"))
+        .as("Jaeger API should show WebClient span with order.kind=main")
+        .isTrue();
+    assertThat(hasOrderKindTagValue("helper"))
+        .as("Jaeger API should show WebClient span with order.kind=helper")
+        .isTrue();
+    assertThat(hasClientUrlTag())
+        .as("Jaeger API should show automatic HTTP URL tags on WebClient spans")
+        .isTrue();
+    assertThat(hasStatisticsStageSpan())
+        .as("Jaeger API should show statistics span with polled and filtered order tags")
+        .isTrue();
+    assertThat(hasWebClientServerErrorTag())
+        .as("Jaeger API should mark failed WebClient span with error=true and error.type")
         .isTrue();
     assertThat(hasSqsCommandSpans())
         .as("Jaeger API should show traced SQS start/stop command spans")
@@ -220,7 +239,7 @@ class TracingIntegrationTest {
     throw new IllegalStateException("Jaeger did not become ready within " + JAEGER_STARTUP_TIMEOUT);
   }
 
-  private static boolean hasFlowCycleTraceHierarchy() {
+  private static boolean hasFlowCycleSpan() {
     try {
       HttpResponse<String> response =
           HTTP_CLIENT.send(
@@ -235,21 +254,177 @@ class TracingIntegrationTest {
       }
       JsonNode root = OBJECT_MAPPER.readTree(response.body());
       for (JsonNode trace : root.path("data")) {
-        boolean hasFlowRoot = false;
-        boolean hasWebClientChild = false;
         for (JsonNode span : trace.path("spans")) {
-          String operationName = span.path("operationName").asText("");
-          if (FLOW_CYCLE_SPAN_NAME.equals(operationName)) {
-            hasFlowRoot = true;
-          }
-          if (AIRPORTAL_POLL_SPAN_NAME.equals(operationName)
-              || AIRPORTAL_MAIN_SAVE_SPAN_NAME.equals(operationName)
-              || AIRPORTAL_HELPER_SAVE_SPAN_NAME.equals(operationName)) {
-            hasWebClientChild = true;
+          if (FLOW_CYCLE_SPAN_NAME.equals(span.path("operationName").asText(""))) {
+            return true;
           }
         }
-        if (hasFlowRoot && hasWebClientChild) {
-          return true;
+      }
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasOrderKindTagValue(String expectedValue) {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (hasTag(span, "order.kind", expectedValue)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasClientUrlTag() {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (hasTagKeyContaining(span, "url")) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasTag(JsonNode span, String key, String value) {
+    for (JsonNode tag : span.path("tags")) {
+      if (key.equals(tag.path("key").asText("")) && value.equals(tag.path("value").asText(""))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasTagKeyContaining(JsonNode span, String fragment) {
+    for (JsonNode tag : span.path("tags")) {
+      String key = tag.path("key").asText("");
+      if (key.contains(fragment)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasStatisticsStageSpan() {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (!STATISTICS_SPAN_NAME.equals(span.path("operationName").asText(""))) {
+            continue;
+          }
+          if (hasTagKeyContaining(span, "orders.main.polled")
+              && hasTagKeyContaining(span, "orders.helpers.polled")
+              && hasTagKeyContaining(span, "orders.main.filtered")
+              && hasTagValueContaining(span, "orders.main.polled", "\"heads\":")
+              && hasTagValueContaining(span, "orders.helpers.polled", "\"heads\":")
+              && hasTagValueContaining(span, "orders.main.filtered", "\"heads\":")
+              && hasTagKeyContaining(span, "state.headsToTake")
+              && hasTagKeyContaining(span, "state.headsTaken")) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (IOException e) {
+      return false;
+    }
+  }
+
+  private static boolean hasTagValueContaining(JsonNode span, String key, String valueFragment) {
+    for (JsonNode tag : span.path("tags")) {
+      if (!key.equals(tag.path("key").asText(""))) {
+        continue;
+      }
+      String tagValue = tag.path("value").asText("");
+      if (tagValue.contains(valueFragment)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasWebClientServerErrorTag() {
+    try {
+      HttpResponse<String> response =
+          HTTP_CLIENT.send(
+              HttpRequest.newBuilder()
+                  .uri(URI.create(JAEGER_TRACES_ENDPOINT))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 400) {
+        return false;
+      }
+      JsonNode root = OBJECT_MAPPER.readTree(response.body());
+      for (JsonNode trace : root.path("data")) {
+        for (JsonNode span : trace.path("spans")) {
+          if (!"http patch".equals(span.path("operationName").asText(""))) {
+            continue;
+          }
+          if (hasTag(span, "status", "500")
+              && hasTag(span, "error", "true")
+              && hasTag(span, "error.type", "500")) {
+            return true;
+          }
         }
       }
       return false;
@@ -345,7 +520,7 @@ class TracingIntegrationTest {
         state.setOrderTypes(List.of(OrderType.NORMAL));
         PollOrdersFlowContext context = PollOrdersFlowContext.begin(state);
         context.setParseOrdersResult(parseResult);
-        FilterRecordsStage filter = new FilterRecordsStage();
+        FilterOrdersStage filter = new FilterOrdersStage();
         StepVerifier.create(filter.execute(context)).verifyComplete();
         List<String> sids =
             context.getFilterRecordsResult().getFilteredOrders().stream()

@@ -11,7 +11,7 @@ import name.golets.order.hunter.common.model.OrdersResponse;
 import name.golets.order.hunter.common.model.ParsedOrders;
 import name.golets.order.hunter.common.utils.OrderParsingUtil;
 import name.golets.order.hunter.worker.flow.PollOrdersFlowContext;
-import name.golets.order.hunter.worker.stage.FilterRecordsStage;
+import name.golets.order.hunter.worker.stage.FilterOrdersStage;
 import name.golets.order.hunter.worker.stage.results.ParseOrdersStageResult;
 import name.golets.order.hunter.worker.state.DefaultWorkerStateManager;
 import org.junit.jupiter.api.Test;
@@ -41,7 +41,7 @@ class FreeOrdersFixtureParsingTest {
     parseResult.setParsedOrders(parsed);
     context.setParseOrdersResult(parseResult);
 
-    FilterRecordsStage filter = new FilterRecordsStage();
+    FilterOrdersStage filter = new FilterOrdersStage();
     StepVerifier.create(filter.execute(context)).verifyComplete();
 
     assertTrue(

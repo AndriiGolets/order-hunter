@@ -89,9 +89,6 @@ public class SaveMainOrdersStage implements Stage<PollOrdersFlowContext> {
         .contextWrite(
             reactorContext ->
                 reactorContext
-                    .put(
-                        FlowObservationContextKeys.SAVE_SPAN_NAME,
-                        "order-hunter.airportal.save.main")
                     .put(FlowObservationContextKeys.SAVE_ORDER_KIND, "main")
                     .put(
                         FlowObservationContextKeys.SAVE_PRODUCT_TITLE,

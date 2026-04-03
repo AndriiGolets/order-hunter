@@ -1,6 +1,8 @@
 package name.golets.order.hunter.worker.config;
 
+import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
+import name.golets.order.hunter.worker.integration.airportal.AirportalClientRequestObservationConvention;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -54,8 +56,11 @@ public class OrderHunterInfrastructureConfiguration {
   @Bean
   @Qualifier(AIRPORTAL_POLL_WEB_CLIENT)
   public WebClient airportalPollWebClient(
-      WebClient.Builder webClientBuilder, OrderHunterProperties properties) {
-    return createAirportalWebClient(webClientBuilder, properties, properties.getPollingTimeout());
+      WebClient.Builder webClientBuilder,
+      OrderHunterProperties properties,
+      ObservationRegistry observationRegistry) {
+    return createAirportalWebClient(
+        webClientBuilder, properties, properties.getPollingTimeout(), observationRegistry);
   }
 
   /**
@@ -68,8 +73,11 @@ public class OrderHunterInfrastructureConfiguration {
   @Bean
   @Qualifier(AIRPORTAL_SAVE_WEB_CLIENT)
   public WebClient airportalSaveWebClient(
-      WebClient.Builder webClientBuilder, OrderHunterProperties properties) {
-    return createAirportalWebClient(webClientBuilder, properties, properties.getSavingTimeout());
+      WebClient.Builder webClientBuilder,
+      OrderHunterProperties properties,
+      ObservationRegistry observationRegistry) {
+    return createAirportalWebClient(
+        webClientBuilder, properties, properties.getSavingTimeout(), observationRegistry);
   }
 
   /**
@@ -88,13 +96,18 @@ public class OrderHunterInfrastructureConfiguration {
   }
 
   private WebClient createAirportalWebClient(
-      WebClient.Builder webClientBuilder, OrderHunterProperties properties, int timeoutMillis) {
+      WebClient.Builder webClientBuilder,
+      OrderHunterProperties properties,
+      int timeoutMillis,
+      ObservationRegistry observationRegistry) {
     String host = properties.getAirportalHost();
     String baseUrl =
         host.startsWith("http://") || host.startsWith("https://") ? host : "https://" + host;
     HttpClient httpClient = HttpClient.create().responseTimeout(Duration.ofMillis(timeoutMillis));
     return webClientBuilder
         .clone()
+        .observationRegistry(observationRegistry)
+        .observationConvention(new AirportalClientRequestObservationConvention())
         .clientConnector(new ReactorClientHttpConnector(httpClient))
         .baseUrl(baseUrl)
         .defaultHeader("xApiToken", properties.getApiToken())

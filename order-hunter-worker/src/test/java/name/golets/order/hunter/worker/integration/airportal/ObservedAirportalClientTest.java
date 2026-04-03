@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.Mockito.mock;
 
-import io.micrometer.observation.ObservationRegistry;
 import java.util.Map;
 import name.golets.order.hunter.worker.config.OrderHunterProperties;
 import org.junit.jupiter.api.Test;
@@ -20,8 +19,7 @@ class ObservedAirportalClientTest {
     properties.setSaveArtistNamePath("/api/records/");
 
     ObservedAirportalClient client =
-        new ObservedAirportalClient(
-            mock(WebClient.class), mock(WebClient.class), ObservationRegistry.NOOP, properties);
+        new ObservedAirportalClient(mock(WebClient.class), mock(WebClient.class), properties);
 
     assertEquals("/api/records/orderSid123", client.buildSavePath("orderSid123"));
   }
@@ -32,8 +30,7 @@ class ObservedAirportalClientTest {
     OrderHunterProperties properties = new OrderHunterProperties();
     properties.setSaveArtistNamePath("/api/records/");
     ObservedAirportalClient client =
-        new ObservedAirportalClient(
-            mock(WebClient.class), mock(WebClient.class), ObservationRegistry.NOOP, properties);
+        new ObservedAirportalClient(mock(WebClient.class), mock(WebClient.class), properties);
 
     Object payload = client.buildAssignArtistBody("artistSid456");
 

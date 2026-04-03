@@ -1,5 +1,7 @@
 package name.golets.order.hunter.worker.stage;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import java.time.Duration;
@@ -29,6 +31,7 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
   private static final Logger log = LoggerFactory.getLogger(NotifySqsStage.class);
   private static final String EVENT_VERSION = "1.0";
   private static final int RETRY_ATTEMPTS = 3;
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private final OrderTakenSqsPublisher orderTakenSqsPublisher;
   private final ObservationRegistry observationRegistry;
 
@@ -47,6 +50,8 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
    * Publishes OrderTaken event based on successful save results, updates completion flags in state,
    * and retries SQS publish failures.
    *
+   * <p>If no orders were saved in the current flow cycle, no outbound event is sent.
+   *
    * @param context flow session context
    * @return completion when event is published and state is adjusted
    */
@@ -57,10 +62,20 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
           if (context.getStateManager() == null) {
             return Mono.empty();
           }
+          reconcileHeadsConsistency(context);
+          OrderTaken event = buildOrderTakenEvent(context);
+          if (event.getSavedOrders().isEmpty()) {
+            log.debug(
+                context.getSessionMarker(),
+                "notifySqsStage skipped publish for flowRunId={} because no orders were saved",
+                context.getFlowRunId());
+            return Mono.empty();
+          }
           Observation observation =
               Observation.createNotStarted(
                       "order-hunter.sqs.publish.orderTaken", observationRegistry)
-                  .lowCardinalityKeyValue("operation", "publishOrderTaken");
+                  .lowCardinalityKeyValue("operation", "publishOrderTaken")
+                  .highCardinalityKeyValue("orderTaken", toJson(event));
           if (contextView.hasKey(FlowObservationContextKeys.FLOW_OBSERVATION)) {
             Object parent = contextView.get(FlowObservationContextKeys.FLOW_OBSERVATION);
             if (parent instanceof Observation parentObservation) {
@@ -68,8 +83,6 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
             }
           }
           observation.start();
-          reconcileHeadsConsistency(context);
-          OrderTaken event = buildOrderTakenEvent(context);
           return orderTakenSqsPublisher
               .publish(event)
               .retryWhen(
@@ -87,6 +100,14 @@ public class NotifySqsStage implements Stage<PollOrdersFlowContext> {
               .doOnError(observation::error)
               .doFinally(signalType -> observation.stop());
         });
+  }
+
+  private static String toJson(OrderTaken event) {
+    try {
+      return OBJECT_MAPPER.writeValueAsString(event);
+    } catch (JsonProcessingException e) {
+      return "{}";
+    }
   }
 
   private OrderTaken buildOrderTakenEvent(PollOrdersFlowContext context) {
